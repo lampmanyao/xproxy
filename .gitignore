@@ -1,0 +1,10 @@
+*/*/.objs
+*/*/*/.objs
+*/*/*/*.so
+*/*/*.log
+*/*/*.so
+*/*/*.pid
+*/*/*.out
+*/*/*.a
+c/remote-btgfw/remote-btgfw
+c/local-btgfw/local-btgfw
