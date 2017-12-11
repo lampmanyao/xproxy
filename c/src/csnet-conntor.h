@@ -1,7 +1,5 @@
 #pragma once
 
-#include "csnet-service-type.h"
-
 #include <pthread.h>
 
 /*

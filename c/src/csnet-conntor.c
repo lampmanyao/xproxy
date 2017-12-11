@@ -1,7 +1,6 @@
 #include "csnet-conntor.h"
 #include "csnet-atomic.h"
 #include "csnet.h"
-#include "csnet-sb.h"
 #include "csnet-rb.h"
 #include "csnet-socket-api.h"
 #include "csnet-utils.h"

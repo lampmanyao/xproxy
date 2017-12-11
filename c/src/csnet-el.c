@@ -16,8 +16,6 @@
 #endif
 #include "csnet-btgfw.h"
 
-#include "cs-lflist.h"
-#include "cs-lfhash.h"
 #include "cs-lfqueue.h"
 
 #include <unistd.h>
