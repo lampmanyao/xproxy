@@ -11,6 +11,7 @@
 #include <strings.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 
 #if defined(__APPLE__)
 #  include <sys/event.h>
@@ -69,10 +70,26 @@ csnet_listen_port(int port) {
 
 int
 csnet_connect_without_timeout(const char* host, int port) {
+	struct sockaddr_in ipv4addr;
 	struct addrinfo hints;
 	struct addrinfo* result;
 	struct addrinfo* rp;
 	int sock;
+
+	if (inet_aton(host, &ipv4addr.sin_addr) == 1) {
+		ipv4addr.sin_family = AF_INET;
+		ipv4addr.sin_port = htons(port);
+		sock = socket(AF_INET, SOCK_STREAM, 0);
+		if (sock < 0) {
+			return -1;
+		}
+		if (connect(sock, (const struct sockaddr*)&ipv4addr,
+			   sizeof(struct sockaddr)) < 0) {
+			close(sock);
+			return -1;
+		}
+		return sock;
+	}
 
 	memset(&hints, 0, sizeof(struct addrinfo));
 	hints.ai_canonname = NULL;
@@ -107,10 +124,26 @@ csnet_connect_without_timeout(const char* host, int port) {
 
 int
 csnet_connect_with_timeout(const char* host, int port, int milliseconds) {
+	struct sockaddr_in ipv4addr;
 	struct addrinfo hints;
 	struct addrinfo* result;
 	struct addrinfo* rp;
 	int sock;
+
+	if (inet_aton(host, &ipv4addr.sin_addr) == 1) {
+		ipv4addr.sin_family = AF_INET;
+		ipv4addr.sin_port = htons(port);
+		sock = socket(AF_INET, SOCK_STREAM, 0);
+		if (sock < 0) {
+			return -1;
+		}
+		if (connect(sock, (const struct sockaddr*)&ipv4addr,
+			   sizeof(struct sockaddr)) < 0) {
+			close(sock);
+			return -1;
+		}
+		return sock;
+	}
 
 	memset(&hints, 0, sizeof(struct addrinfo));
 	hints.ai_canonname = NULL;
