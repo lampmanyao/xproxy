@@ -44,7 +44,7 @@ csnet_trim(char* name) {
 		start_pos++;
 	}
 	if (strlen(start_pos) == 0) {
-		return NULL; 
+		return NULL;
 	}
 	char* end_pos = name + strlen(name) - 1;
 	while ((*end_pos == ' ') || (*end_pos == '\t')) {
@@ -53,7 +53,7 @@ csnet_trim(char* name) {
 	}
 	int len = (int)(end_pos - start_pos) + 1;
 	if (len <= 0) {
-		return NULL; 
+		return NULL;
 	}
 	return start_pos;
 }
@@ -99,7 +99,7 @@ csnet_bind_to_cpu(pthread_t tid, int cpuid) {
 	cpu_set_t mask;
 	CPU_ZERO(&mask);
 	CPU_SET(cpuid, &mask);
-	return pthread_setaffinity_np(tid, sizeof(mask), &mask);	
+	return pthread_setaffinity_np(tid, sizeof(mask), &mask);
 #endif
 }
 
@@ -123,7 +123,7 @@ csnet_bound_cpuid(pthread_t tid) {
 			return i;
 		}
 	}
-	return -1;	
+	return -1;
 #endif
 }
 

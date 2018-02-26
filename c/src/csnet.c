@@ -40,12 +40,8 @@ static struct csnet_cond cond = CSNET_COND_INITILIAZER;
 static void _do_accept(struct csnet* csnet, int* listenfd);
 
 struct csnet*
-csnet_new(int port,
-          int thread_count,
-          int max_conn,
-          struct csnet_log* log,
-          struct csnet_module* module,
-          struct cs_lfqueue* q) {
+csnet_new(int port, int thread_count, int max_conn,
+          struct csnet_log* log, struct csnet_module* module, struct cs_lfqueue* q) {
 	struct csnet* csnet;
 	csnet = calloc(1, sizeof(*csnet) + thread_count * sizeof(struct csnet_el*));
 	if (!csnet) {
@@ -103,7 +99,7 @@ csnet_dispatch_thread(void* arg) {
 			csnet_socket_send(msg->socket, msg->data, msg->size);
 			csnet_msg_free(msg);
 		} else {
-			csnet_cond_nonblocking_wait(&cond, 1, 0);
+			csnet_cond_nonblocking_wait(&cond, 0, 100);
 		}
 	}
 
@@ -191,16 +187,17 @@ _do_accept(struct csnet* csnet, int* listenfd) {
 		fd = accept(*listenfd, (struct sockaddr*)&sin, &len);
 
 		if (fd > 0) {
-			log_info(csnet->log, "accept incoming [%s:%d] with socket: %d.",
+			log_info(csnet->log, "accept incoming [%s:%d] with socket %d.",
 				inet_ntoa(sin.sin_addr), ntohs(sin.sin_port), fd);
 
 			if (csnet_set_nonblocking(fd) == -1) {
-				log_error(csnet->log, "can not set socket: %d to nonblock", fd);
+				log_error(csnet->log, "cannot set socket %d to nonblock", fd);
 				close(fd);
 				continue;
 			}
 
-			if (csnet_el_add_connection(csnet->el_list[fd % csnet->thread_count], fd) == -1) {
+			if (csnet_el_add_connection(csnet->el_list[fd % csnet->thread_count],
+						    fd) == -1) {
 				close(fd);
 				return;
 			}

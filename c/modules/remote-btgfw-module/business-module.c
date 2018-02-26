@@ -8,18 +8,15 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 
+#define RANDOM_LENGTH 9
+
 static int client_handler(struct csnet_socket* socket, int state, char* data, int data_len);
 static int remote_handler(struct csnet_socket* socket, int state, char* data, int data_len);
 
-/*
- * These variables define at main.c
- */
 struct csnet_log* LOG = NULL;
 struct cs_lfqueue* Q = NULL;
 struct csnet_conntor* CONNTOR = NULL;
-
 char* passwd;
-
 
 int
 business_init(struct csnet_conntor* conntor, struct cs_lfqueue* q,
@@ -74,19 +71,20 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			break;
 		}
 
-		plain_data_len = csnet_128cbc_decrypt(&plain_data, data + 4, cipher_data_len, passwd);
+		plain_data_len = csnet_128cfb_decrypt(&plain_data, data + 4, cipher_data_len, passwd);
 		if (plain_data_len < 0) {
 			log_error(LOG, "decrypt error. exhost.");
 			ret = -1;
 			break;
 		}
 
-		uint8_t ver = plain_data[0 + 9];
-		uint8_t cmd = plain_data[1 + 9];
-		uint8_t rsv = plain_data[2 + 9];
-		uint8_t typ = plain_data[3 + 9];
+		uint8_t ver = plain_data[0 + RANDOM_LENGTH];
+		uint8_t cmd = plain_data[1 + RANDOM_LENGTH];
+		uint8_t rsv = plain_data[2 + RANDOM_LENGTH];
+		uint8_t typ = plain_data[3 + RANDOM_LENGTH];
 
 		if (typ == SOCKS5_ATYP_IPv4) {
+			log_error(LOG, "unsupport IPv4 yet");
 			return -1;
 		} else if (typ == SOCKS5_ATYP_DONAME) {
 			uint8_t domain_name_len;
@@ -99,10 +97,10 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			int cipher_reply_len;
 			struct csnet_msg* msg;
 
-			domain_name_len = plain_data[SOCKS5_REQ_HEAD_SIZE + 9];
-			memcpy(domain_name, plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + 9, domain_name_len);
+			domain_name_len = plain_data[SOCKS5_REQ_HEAD_SIZE + RANDOM_LENGTH];
+			memcpy(domain_name, plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + RANDOM_LENGTH, domain_name_len);
 			domain_name[domain_name_len] = '\0';
-			memcpy((char*)&nport, plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + 9, SOCKS5_PORT_SIZE);
+			memcpy((char*)&nport, plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + RANDOM_LENGTH, SOCKS5_PORT_SIZE);
 			hsport = ntohs(nport);
 
 			target_sock = csnet_conntor_connectto(CONNTOR, domain_name, hsport);
@@ -116,21 +114,25 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			memcpy(target_sock->host, domain_name, domain_name_len);
 			target_sock->host[domain_name_len] = '\0';
 
-			log_debug(LOG, "exhost: %d ---> %s[%d]", socket->fd, domain_name, target_sock->fd);
+			log_debug(LOG, "exhost: socket %d ---> socket %d (%s)",
+				  socket->fd, target_sock->fd, domain_name);
 
-			memcpy(reply, "123456789", 9);
+			memcpy(reply, "123456789", RANDOM_LENGTH);
 
-			reply[0 + 9] = ver;
-			reply[1 + 9] = SOCKS5_RSP_SUCCEED;
-			reply[2 + 9] = SOCKS5_RSV;
-			reply[3 + 9] = SOCKS5_ATYP_DONAME; 
-			reply[4 + 9] = domain_name_len;
-			memcpy(reply + 5 + 9, domain_name, domain_name_len);
-			memcpy(reply + 5 + domain_name_len + 9, (char*)&nport, SOCKS5_PORT_SIZE);
+			reply[0 + RANDOM_LENGTH] = ver;
+			reply[1 + RANDOM_LENGTH] = SOCKS5_RSP_SUCCEED;
+			reply[2 + RANDOM_LENGTH] = SOCKS5_RSV;
+			reply[3 + RANDOM_LENGTH] = SOCKS5_ATYP_DONAME;
+			reply[4 + RANDOM_LENGTH] = domain_name_len;
+			memcpy(reply + 5 + RANDOM_LENGTH, domain_name, domain_name_len);
+			memcpy(reply + 5 + domain_name_len + RANDOM_LENGTH, (char*)&nport, SOCKS5_PORT_SIZE);
 
-			cipher_reply_len = csnet_128cbc_encrypt(&cipher_reply, reply, 5 + domain_name_len + SOCKS5_PORT_SIZE + 9, passwd);
+			cipher_reply_len = csnet_128cfb_encrypt(&cipher_reply, reply,
+								5 + domain_name_len + SOCKS5_PORT_SIZE + RANDOM_LENGTH,
+								passwd);
 			if (cipher_reply_len < 0) {
-				log_error(LOG, "encrypt error. exhost: %d ---> %s[%d]", socket->fd, domain_name, target_sock->fd);
+				log_error(LOG, "encrypt error. exhost: socket %d ---> socket %d (%s)",
+					  socket->fd, target_sock->fd, domain_name);
 				free(plain_data);
 				return -1;
 			}
@@ -140,7 +142,8 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			csnet_msg_append(msg, cipher_reply, cipher_reply_len);
 			csnet_sendto(Q, msg);
 
-			log_debug(LOG, "exhost: %d <--- %s[%d]", socket->fd, domain_name, target_sock->fd);
+			log_debug(LOG, "exhost: socket %d <--- socket %d (%s)",
+				  socket->fd, target_sock->fd, domain_name);
 
 			socket->sock = target_sock;
 			target_sock->sock = socket;
@@ -153,21 +156,22 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 
 			ret = 4 + cipher_data_len;
 		} else if (typ == SOCKS5_ATYP_IPv6) {
+			log_error(LOG, "unsupport IPv6 yet");
 			ret = -1;
 		} else {
+			log_error(LOG, "unknown address type");
 			ret = -1;
 		}
 		break;
 	}
 
 	case SOCKS5_ST_STREAMING: {
+		log_debug(LOG, "streaming: socket %d ---> socket %d (%s)",
+			  socket->fd, socket->sock->fd, socket->sock->host);
 		struct csnet_msg* msg;
 		msg = csnet_msg_new(data_len, socket->sock);
 		csnet_msg_append(msg, data, data_len);
 		csnet_sendto(Q, msg);
-
-		log_debug(LOG, "stream: %d ---> %s[%d]", socket->fd, socket->sock->host, socket->sock->fd);
-
 		ret = data_len;
 		break;
 	}
@@ -177,8 +181,8 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 		break;
 	}
 
-	log_debug(LOG, "recv %d bytes, handle %d bytes, remains %d bytes. of local: %d",
-		  data_len, ret, data_len - ret, socket->fd);
+	log_debug(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
+		  socket->fd, data_len, ret, data_len - ret);
 
 	return ret;
 }
@@ -190,10 +194,11 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 	csnet_msg_append(msg, data, data_len);
 	csnet_sendto(Q, msg);
 
-	log_debug(LOG, "stream: %d <--- %s[%d]", socket->sock->fd, socket->host, socket->fd);
+	log_debug(LOG, "streaming: socket %d <--- socket %d (%s)",
+		  socket->sock->fd, socket->fd, socket->host);
 
-	log_debug(LOG, "recv %d bytes, handle %d bytes, remains %d bytes. of target: %d",
-		  data_len, data_len, data_len - data_len, socket->fd);
+	log_debug(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
+		  socket->fd, data_len, data_len, data_len - data_len);
 
 	return data_len;
 }

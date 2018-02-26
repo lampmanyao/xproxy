@@ -133,17 +133,19 @@ readable_event(struct csnet_el* el, struct csnet_socket* socket) {
 		int state = socket->state;
 		int rt = csnet_module_entry(el->module, socket, state, data, data_len);
 
-		if (rt == -1) {
-			log_error(el->log, "module return error");
-			csnet_epoller_del(el->epoller, socket->fd, socket->sid);
-			csnet_sockset_reset_socket(el->sockset, socket->sid);
-			el->cur_conn--;
-		} else {
+		if (rt != -1) {
 			csnet_rb_seek(socket->rb, rt);
 			csnet_epoller_mod_rw(el->epoller, socket->fd, socket->sid);
+		} else {
+			csnet_epoller_del(el->epoller, socket->fd, socket->sid);
+			csnet_sockset_reset_socket(el->sockset, socket->sid);
+			log_error(el->log, "module return error, closing socket %d (%s)",
+				  socket->fd, socket->host);
+			el->cur_conn--;
 		}
 	} else {
-		log_warn(el->log, "client peer close. %s[%d]", socket->host, socket->fd);
+		log_warn(el->log, "client peer close, closing socket %d (%s)",
+			 socket->fd, socket->host);
 		csnet_epoller_del(el->epoller, socket->fd, socket->sid);
 		csnet_sockset_reset_socket(el->sockset, socket->sid);
 		el->cur_conn--;

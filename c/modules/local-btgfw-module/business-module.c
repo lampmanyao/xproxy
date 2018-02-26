@@ -7,17 +7,14 @@
 #include <string.h>
 #include <pthread.h>
 
+#define RANDOM_LENGTH 9
+
 static int client_handler(struct csnet_socket* socket, int state, char* data, int data_len);
 static int remote_handler(struct csnet_socket* socket, int state, char* data, int data_len);
 
-/*
- * These variables define at main.c
- */
 struct csnet_log* LOG = NULL;
 struct cs_lfqueue* Q = NULL;
 struct csnet_conntor* CONNTOR = NULL;
-
-
 char* remote_host;
 int remote_port;
 char* passwd;
@@ -67,7 +64,7 @@ business_entry(struct csnet_socket* socket, int state, char* data, int data_len)
 	}
 }
 
-static int 
+static int
 client_handler(struct csnet_socket* socket, int state, char* data, int data_len) {
 	int ret = 0;
 
@@ -152,11 +149,11 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			remote_sock->sock = socket;
 			socket->sock = remote_sock;
 
-			memcpy(request, "123456789", 9);
-			memcpy(request + 9, data, 10);
+			memcpy(request, "123456789", RANDOM_LENGTH);
+			memcpy(request + RANDOM_LENGTH, data, 10);
 
 			char* cipher_data;
-			int cipher_data_len = csnet_128cbc_encrypt(&cipher_data, request, 10 + 9, passwd);
+			int cipher_data_len = csnet_128cfb_encrypt(&cipher_data, request, 10 + RANDOM_LENGTH, passwd);
 			if (cipher_data_len < 0) {
 				log_error(LOG, "encrypt error");
 				ret = -1;
@@ -204,21 +201,23 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			memcpy(remote_sock->host, domain_name, domain_name_len);
 			remote_sock->host[domain_name_len] = '\0';
 
-			log_debug(LOG, "exhost: %d ---> %s[%d]", socket->fd, domain_name, remote_sock->fd);
+			log_debug(LOG, "exhost: socket %d ---> socket %d (%s)",
+				  socket->fd, remote_sock->fd, domain_name);
 
 			remote_sock->sock = socket;
 			socket->sock = remote_sock;
 
-			memcpy(request, "123456789", 9);
-			memcpy(request + 9, data, SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE);
+			memcpy(request, "123456789", RANDOM_LENGTH);
+			memcpy(request + RANDOM_LENGTH, data, SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE);
 
 			char* cipher_data;
-			int cipher_data_len = csnet_128cbc_encrypt(&cipher_data,
+			int cipher_data_len = csnet_128cfb_encrypt(&cipher_data,
 								   request,
-								   SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE + 9,
+								   SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE + RANDOM_LENGTH,
 								   passwd);
 			if (cipher_data_len < 0) {
-				log_error(LOG, "encrypt error. exhost: %d ---> %s[%d]", socket->fd, domain_name, remote_sock->fd);
+				log_error(LOG, "encrypt error. exhost: socket %d ---> socket %d (%s)",
+					  socket->fd, remote_sock->fd, domain_name);
 				ret = -1;
 				break;
 			}
@@ -234,7 +233,7 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			socket->state = SOCKS5_ST_STREAMING;
 			ret = SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE;
 		} else if (atyp == SOCKS5_ATYP_IPv6) {
-			log_debug(LOG, "address type is IPv6, not support yet!");
+			log_debug(LOG, "address type is IPv6, not support yet");
 			ret = -1;
 		} else {
 			log_error(LOG, "unknown address type: %d, close connection", atyp);
@@ -249,7 +248,8 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 		csnet_msg_append(msg, data, data_len);
 		csnet_sendto(Q, msg);
 
-		log_debug(LOG, "stream: %d ---> %s[%d]", socket->fd, socket->sock->host, socket->sock->fd);
+		log_debug(LOG, "streaming: socket %d ---> socket %d (%s)",
+			  socket->fd, socket->sock->fd, socket->sock->host);
 
 		ret = data_len;
 		break;
@@ -261,13 +261,13 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 		break;
 	}
 
-	log_debug(LOG, "recv %d bytes, handle %d bytes, remainss %d bytes. of client: %d",
-		  data_len, ret, data_len - ret, socket->fd);
+	log_debug(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
+		  socket->fd, data_len, ret, data_len - ret);
 
 	return ret;
 }
 
-static int 
+static int
 remote_handler(struct csnet_socket* socket, int state, char* data, int data_len) {
 	int ret = 0;
 
@@ -293,31 +293,33 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			break;
 		}
 
-		plain_data_len = csnet_128cbc_decrypt(&plain_data, data + 4, cipher_data_len, passwd);
+		plain_data_len = csnet_128cfb_decrypt(&plain_data, data + 4, cipher_data_len, passwd);
 		if (plain_data_len < 0) {
-			log_error(LOG, "decrypt error. exhost: %d <--- %s[%d]", socket->sock->fd, socket->host, socket->fd);
+			log_error(LOG, "decrypt error. exhost: %d <--- socket %d (%s)",
+				  socket->sock->fd, socket->fd, socket->host);
 			ret = -1;
 			break;
 		}
 
-		uint8_t ver = plain_data[0 + 9];
-		uint8_t rsp = plain_data[1 + 9];
-		uint8_t rsv = plain_data[2 + 9];
-		uint8_t typ = plain_data[3 + 9];
+		uint8_t ver = plain_data[0 + RANDOM_LENGTH];
+		uint8_t rsp = plain_data[1 + RANDOM_LENGTH];
+		uint8_t rsv = plain_data[2 + RANDOM_LENGTH];
+		uint8_t typ = plain_data[3 + RANDOM_LENGTH];
 
 		if (typ == SOCKS5_ATYP_IPv4) {
-			memcpy(reply, plain_data + 9, 10);
+			memcpy(reply, plain_data + RANDOM_LENGTH, 10);
 			msg = csnet_msg_new(10, socket->sock);
 			csnet_msg_append(msg, reply, 10);
 			csnet_sendto(Q, msg);
 		} else if (typ == SOCKS5_ATYP_DONAME) {
-			uint8_t domain_name_len = plain_data[SOCKS5_RSP_HEAD_SIZE + 9];
+			uint8_t domain_name_len = plain_data[SOCKS5_RSP_HEAD_SIZE + RANDOM_LENGTH];
 			ret = SOCKS5_RSP_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE;
-			memcpy(reply, plain_data + 9, ret);
+			memcpy(reply, plain_data + RANDOM_LENGTH, ret);
 			msg = csnet_msg_new(ret, socket->sock);
 			csnet_msg_append(msg, reply, ret);
 			csnet_sendto(Q, msg);
-			log_debug(LOG, "exhost: %d <--- %s[%d]", socket->sock->fd, socket->host, socket->fd);
+			log_debug(LOG, "exhost: socket %d <--- socket %d (%s)",
+				  socket->sock->fd, socket->fd, socket->host);
 		} else if (typ == SOCKS5_ATYP_IPv6) {
 			ret = -1;
 			break;
@@ -337,7 +339,8 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 		csnet_msg_append(msg, data, data_len);
 		csnet_sendto(Q, msg);
 
-		log_debug(LOG, "stream: %d <--- %s[%d]", socket->sock->fd, socket->host, socket->fd);
+		log_debug(LOG, "streaming: socket %d <--- socket %d (%s)",
+			  socket->sock->fd, socket->fd, socket->host);
 		ret = data_len;
 		break;
 	}
@@ -347,8 +350,8 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 		break;
 	}
 
-	log_debug(LOG, "recv %d bytes, handle %d bytes, remains %d bytes. of remote: %d",
-		  data_len, ret, data_len - ret, socket->fd);
+	log_debug(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
+		  socket->fd, data_len, ret, data_len - ret);
 
 	return ret;
 }

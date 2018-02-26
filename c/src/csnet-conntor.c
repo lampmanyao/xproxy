@@ -124,7 +124,7 @@ struct csnet_socket*
 csnet_conntor_connectto(struct csnet_conntor* conntor, char* host, int port) {
 	int fd = csnet_connect_with_timeout(host, port, 1000);
 	if (fd > 0) {
-		log_info(conntor->log, "connected to %s:%d. socket: %d", host, port, fd);
+		log_info(conntor->log, "connected to %s:%d. socket %d", host, port, fd);
 
 		unsigned int sid;
 		struct csnet_socket* socket;
@@ -156,16 +156,19 @@ readable_event(struct csnet_conntor* conntor, struct csnet_socket* socket) {
 		unsigned int data_len = socket->rb->data_len;
 		int state = socket->state;
 		int rt = csnet_module_entry(conntor->module, socket, state, data, data_len);
-		if (rt == -1) {
-			log_error(conntor->log, "module return error");
-			csnet_epoller_del(conntor->epoller, socket->fd, socket->sid);
-			csnet_sockset_reset_socket(conntor->sockset, socket->sid);
-		} else {
+
+		if (rt != -1) {
 			csnet_rb_seek(socket->rb, rt);
 			csnet_epoller_mod_rw(conntor->epoller, socket->fd, socket->sid);
+		} else {
+			log_error(conntor->log, "module return error, closing socket %d (%s)",
+				  socket->fd, socket->host);
+			csnet_epoller_del(conntor->epoller, socket->fd, socket->sid);
+			csnet_sockset_reset_socket(conntor->sockset, socket->sid);
 		}
 	} else {
-		log_warn(conntor->log, "remote peer close. %s[%d]", socket->host, socket->fd);
+		log_warn(conntor->log, "remote peer close, closing socket %d (%s)",
+			 socket->fd, socket->host);
 		csnet_epoller_del(conntor->epoller, socket->fd, socket->sid);
 		csnet_sockset_reset_socket(conntor->sockset, socket->sid);
 	}

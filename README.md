@@ -32,7 +32,7 @@ cd btgfw/c/local-btgfw
 - stop: networksetup -setsocksfirewallproxystate Wi-Fi off
 
 ## TODOs
-- support DNS
+- support DNS cache
 - support IPv4
 - support IPv6
 - support UDP

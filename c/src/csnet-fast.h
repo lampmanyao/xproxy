@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * See GCC-5.2 manual 
+ * See GCC-5.2 manual
  * 6.57 Other Built-in Functions Provided by GCC
  *  long __builtin_expect (long exp, long c)
  * for more details.

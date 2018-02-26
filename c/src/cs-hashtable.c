@@ -92,7 +92,7 @@ cs_ht_delete(struct cs_ht* table, struct cs_htnode* node) {
 	int index = hash % table->size;
 
 	if (!table->lists[index]) {
-		return -1; 
+		return -1;
 	}
 
 	cs_htlist_delete(table->lists[index], node);

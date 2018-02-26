@@ -13,7 +13,7 @@ int main(int argc, char** argv)
 {
 	if (argc != 2) {
 		fatal("usage: %s config", argv[0]);
-	}	
+	}
 
 	csnet_signals_init();
 	csnet_coredump_init();
@@ -81,7 +81,7 @@ int main(int argc, char** argv)
 	} else {
 		max_files = atoi(maxfiles);
 	}
-	
+
 	if (csnet_openfiles_init(max_files) != 0) {
 		fatal("set max open files to %d failed: %s", max_files, strerror(errno));
 	}

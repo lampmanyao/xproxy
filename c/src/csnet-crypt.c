@@ -6,7 +6,6 @@
 #include <pthread.h>
 #include <openssl/ssl.h>
 #include <openssl/evp.h>
-#include <openssl/md5.h>
 #include <openssl/err.h>
 
 static unsigned char* IV = (unsigned char*)"02ALC9WG8!T28YD*OAWcBAuI";
@@ -55,14 +54,6 @@ csnet_crypt_setup(void) {
 	CRYPTO_set_locking_callback((void (*)(int, int, const char*, int))pthreads_locking_callback);
 }
 
-static void
-md5_bin16(unsigned char* dst, const char* src, int len) {
-	MD5_CTX ctx;
-	MD5_Init(&ctx);
-	MD5_Update(&ctx, (unsigned char*)src, len);
-	MD5_Final((unsigned char*)dst, &ctx);
-}
-
 void
 csnet_crypt_cleanup(void) {
 	CRYPTO_set_locking_callback(NULL);
@@ -77,14 +68,12 @@ csnet_crypt_cleanup(void) {
 }
 
 int
-csnet_128cbc_encrypt(char** cipherdata,
+csnet_128cfb_encrypt(char** cipherdata,
 		     char* plaindata, unsigned int length, const char* key) {
 	EVP_CIPHER_CTX ctx;
 	EVP_CIPHER_CTX_init(&ctx);
-	unsigned char key_md5[16];
-	md5_bin16(key_md5, key, strlen(key));
 
-	if (EVP_EncryptInit_ex(&ctx, EVP_aes_128_cbc(), NULL, key_md5, IV) != 1) {
+	if (EVP_EncryptInit_ex(&ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
 		EVP_CIPHER_CTX_cleanup(&ctx);
 		return -1;
 	}
@@ -111,14 +100,12 @@ csnet_128cbc_encrypt(char** cipherdata,
 }
 
 int
-csnet_128cbc_decrypt(char** plaindata,
+csnet_128cfb_decrypt(char** plaindata,
 		     char* cipherdata, unsigned int length, const char* key) {
 	EVP_CIPHER_CTX ctx;
 	EVP_CIPHER_CTX_init(&ctx);
-	unsigned char key_md5[16];
-	md5_bin16(key_md5, key, strlen(key));
 
-	if (EVP_DecryptInit_ex(&ctx, EVP_aes_128_cbc(), NULL, key_md5, IV) != 1) {
+	if (EVP_DecryptInit_ex(&ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
 		EVP_CIPHER_CTX_cleanup(&ctx);
 		return -1;
 	}
@@ -157,15 +144,17 @@ int main()
 	char* key = "helloworld";
 	char* plaindata = "ASDASDSADASDASDASD";
 	int length = strlen(plaindata);
-	printf("%d\n", length);
+	printf("plain data length = %d\n", length);
 	char* cipherdata;
-	int cipherdata_len = csnet_128cbc_encrypt(&cipherdata, plaindata, length, key);
-	printf("%d\n", cipherdata_len);
+	int cipherdata_len = csnet_128cfb_encrypt(&cipherdata, plaindata, length, key);
+	printf("encrypted data length = %d\n", cipherdata_len);
 
 	char* rawdata;
-	int rawdata_len = csnet_128cbc_decrypt(&rawdata, cipherdata, cipherdata_len, key);
-	printf("%d\n", rawdata_len);
-	printf("%s\n", rawdata);
+	int rawdata_len = csnet_128cfb_decrypt(&rawdata, cipherdata, cipherdata_len, key);
+
+	printf("decrypted data length = %d\n", rawdata_len);
+	printf("before encrypted: %s\n", plaindata);
+	printf("atfer decrypted: %s\n", rawdata);
 
 	free(cipherdata);
 	free(rawdata);
