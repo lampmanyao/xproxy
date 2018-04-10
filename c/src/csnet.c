@@ -99,7 +99,11 @@ csnet_dispatch_thread(void* arg) {
 			csnet_socket_send(msg->socket, msg->data, msg->size);
 			csnet_msg_free(msg);
 		} else {
+#if defined(__APPLE__)
 			csnet_cond_nonblocking_wait(&cond, 0, 100);
+#else
+			csnet_cond_nonblocking_wait(&cond, 0, 1000);
+#endif
 		}
 	}
 
