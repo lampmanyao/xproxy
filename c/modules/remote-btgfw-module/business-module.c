@@ -8,7 +8,7 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 
-#define RANDOM_LENGTH 9
+#define RANDOM_SIZE sizeof(int64_t)
 
 static int client_handler(struct csnet_socket* socket, int state, char* data, int data_len);
 static int remote_handler(struct csnet_socket* socket, int state, char* data, int data_len);
@@ -24,6 +24,8 @@ business_init(struct csnet_conntor* conntor, struct cs_lfqueue* q,
 	CONNTOR = conntor;
 	LOG = log;
 	Q = q;
+
+	rand();
 
 	passwd = csnet_config_find(config, "password", strlen("password"));
 	if (!passwd) {
@@ -58,53 +60,131 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 		int plain_data_len;
 		char* plain_data;
 
-		if (data_len < 4) {
+		if (csnet_slow(data_len < 4)) {
 			log_debug(LOG, "not complete data, wait for more");
 			ret = 0;
 			break;
 		}
 
 		memcpy((char*)&cipher_data_len, data, 4);
-		if (data_len < 4 + cipher_data_len) {
+		if (csnet_slow(data_len < 4 + cipher_data_len)) {
 			log_debug(LOG, "not complete data, wait for more");
 			ret = 0;
 			break;
 		}
 
-		plain_data_len = csnet_128cfb_decrypt(&plain_data, data + 4, cipher_data_len, passwd);
+		plain_data_len = csnet_128cfb_decrypt(&plain_data,
+						      data + 4,
+						      cipher_data_len,
+						      passwd);
 		if (plain_data_len < 0) {
 			log_error(LOG, "decrypt error. exhost.");
 			ret = -1;
 			break;
 		}
 
-		uint8_t ver = plain_data[0 + RANDOM_LENGTH];
-		uint8_t cmd = plain_data[1 + RANDOM_LENGTH];
-		uint8_t rsv = plain_data[2 + RANDOM_LENGTH];
-		uint8_t typ = plain_data[3 + RANDOM_LENGTH];
+		uint8_t ver = plain_data[0 + RANDOM_SIZE];
+		uint8_t cmd = plain_data[1 + RANDOM_SIZE];
+		uint8_t rsv = plain_data[2 + RANDOM_SIZE];
+		uint8_t typ = plain_data[3 + RANDOM_SIZE];
 
 		if (typ == SOCKS5_ATYP_IPv4) {
-			log_error(LOG, "unsupport IPv4 yet");
-			return -1;
+			char reply[256];
+			char ipv4[32];
+			uint16_t nport;
+			uint16_t hsport;
+			struct csnet_socket* target_sock;
+			char* cipher_reply;
+			int cipher_reply_len;
+			struct csnet_msg* msg;
+
+			uint8_t p0 = plain_data[4 + RANDOM_SIZE];
+			uint8_t p1 = plain_data[5 + RANDOM_SIZE];
+			uint8_t p2 = plain_data[6 + RANDOM_SIZE];
+			uint8_t p3 = plain_data[7 + RANDOM_SIZE];
+
+			int ipv4_str_len = sprintf(ipv4, "%d.%d.%d.%d", p0, p1, p2, p3);
+			memcpy((char*)&nport, plain_data + 8 + RANDOM_SIZE, SOCKS5_PORT_SIZE);
+			hsport = ntohs(nport);
+
+			memcpy(socket->host, ipv4, ipv4_str_len);
+			socket->host[ipv4_str_len] = '\0';
+			memcpy(target_sock->host, ipv4, ipv4_str_len);
+			target_sock->host[ipv4_str_len] = '\0';
+
+			target_sock = csnet_conntor_connectto(CONNTOR, ipv4, hsport);
+			if (csnet_slow(!target_sock)) {
+				log_error(LOG, "failed to connect target host");
+				free(plain_data);
+				return -1;
+			}
+
+			log_debug(LOG, "exhost: socket %d ---> socket %d (%s)",
+				  socket->fd, target_sock->fd, ipv4);
+
+			int64_t randnum = random();
+			memcpy(reply, &randnum, RANDOM_SIZE);
+			reply[0 + RANDOM_SIZE] = ver;
+			reply[1 + RANDOM_SIZE] = SOCKS5_RSP_SUCCEED;
+			reply[2 + RANDOM_SIZE] = SOCKS5_RSV;
+			reply[3 + RANDOM_SIZE] = SOCKS5_ATYP_IPv4;
+			memcpy(reply + 4 + RANDOM_SIZE, plain_data + 4 + RANDOM_SIZE, 4);
+			memcpy(reply + 4 + 4 + RANDOM_SIZE, (char*)&nport, SOCKS5_PORT_SIZE);
+
+			cipher_reply_len = csnet_128cfb_encrypt(&cipher_reply,
+							        reply,
+								SOCKS5_IPV4_REQ_SIZE + RANDOM_SIZE,
+								passwd);
+
+			if (cipher_reply_len < 0) {
+				log_error(LOG, "encrypt error. socket %d ---> socket %d (%s)",
+					  socket->fd, target_sock->fd, ipv4);
+				free(plain_data);
+				return -1;
+			}
+
+			msg = csnet_msg_new(4 + cipher_reply_len, socket);
+			csnet_msg_append(msg, (char*)&cipher_reply_len, 4);
+			csnet_msg_append(msg, cipher_reply, cipher_reply_len);
+			csnet_sendto(Q, msg);
+
+			log_debug(LOG, "exhost: socket %d <--- socket %d (%s)",
+				  socket->fd, target_sock->fd, ipv4);
+
+			socket->sock = target_sock;
+			target_sock->sock = socket;
+
+			free(cipher_reply);
+			free(plain_data);
+
+			socket->state = SOCKS5_ST_STREAMING;
+			socket->sock->state = SOCKS5_ST_STREAMING;
+
+			ret = 4 + cipher_data_len;
 		} else if (typ == SOCKS5_ATYP_DONAME) {
 			uint8_t domain_name_len;
 			char domain_name[256];
 			uint16_t nport;
 			uint16_t hsport;
 			struct csnet_socket* target_sock;
-			char reply[512];
+			char reply[256];
 			char* cipher_reply;
 			int cipher_reply_len;
 			struct csnet_msg* msg;
 
-			domain_name_len = plain_data[SOCKS5_REQ_HEAD_SIZE + RANDOM_LENGTH];
-			memcpy(domain_name, plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + RANDOM_LENGTH, domain_name_len);
+			domain_name_len = plain_data[SOCKS5_REQ_HEAD_SIZE + RANDOM_SIZE];
+			memcpy(domain_name,
+			       plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + RANDOM_SIZE,
+			       domain_name_len);
 			domain_name[domain_name_len] = '\0';
-			memcpy((char*)&nport, plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + RANDOM_LENGTH, SOCKS5_PORT_SIZE);
+			memcpy((char*)&nport,
+			       plain_data + SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + RANDOM_SIZE,
+			       SOCKS5_PORT_SIZE);
 			hsport = ntohs(nport);
 
 			target_sock = csnet_conntor_connectto(CONNTOR, domain_name, hsport);
-			if (!target_sock) {
+			if (csnet_slow(!target_sock)) {
+				log_error(LOG, "failed to connect target host");
 				free(plain_data);
 				return -1;
 			}
@@ -117,21 +197,25 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			log_debug(LOG, "exhost: socket %d ---> socket %d (%s)",
 				  socket->fd, target_sock->fd, domain_name);
 
-			memcpy(reply, "123456789", RANDOM_LENGTH);
+			int64_t randnum = random();
+			memcpy(reply, &randnum, RANDOM_SIZE);
 
-			reply[0 + RANDOM_LENGTH] = ver;
-			reply[1 + RANDOM_LENGTH] = SOCKS5_RSP_SUCCEED;
-			reply[2 + RANDOM_LENGTH] = SOCKS5_RSV;
-			reply[3 + RANDOM_LENGTH] = SOCKS5_ATYP_DONAME;
-			reply[4 + RANDOM_LENGTH] = domain_name_len;
-			memcpy(reply + 5 + RANDOM_LENGTH, domain_name, domain_name_len);
-			memcpy(reply + 5 + domain_name_len + RANDOM_LENGTH, (char*)&nport, SOCKS5_PORT_SIZE);
+			reply[0 + RANDOM_SIZE] = ver;
+			reply[1 + RANDOM_SIZE] = SOCKS5_RSP_SUCCEED;
+			reply[2 + RANDOM_SIZE] = SOCKS5_RSV;
+			reply[3 + RANDOM_SIZE] = SOCKS5_ATYP_DONAME;
+			reply[4 + RANDOM_SIZE] = domain_name_len;
+			memcpy(reply + 5 + RANDOM_SIZE, domain_name, domain_name_len);
+			memcpy(reply + 5 + domain_name_len + RANDOM_SIZE,
+			       (char*)&nport,
+			       SOCKS5_PORT_SIZE);
 
-			cipher_reply_len = csnet_128cfb_encrypt(&cipher_reply, reply,
-								5 + domain_name_len + SOCKS5_PORT_SIZE + RANDOM_LENGTH,
+			cipher_reply_len = csnet_128cfb_encrypt(&cipher_reply,
+								reply,
+								5 + domain_name_len + SOCKS5_PORT_SIZE + RANDOM_SIZE,
 								passwd);
 			if (cipher_reply_len < 0) {
-				log_error(LOG, "encrypt error. exhost: socket %d ---> socket %d (%s)",
+				log_error(LOG, "encrypt error. socket %d ---> socket %d (%s)",
 					  socket->fd, target_sock->fd, domain_name);
 				free(plain_data);
 				return -1;

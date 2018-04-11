@@ -33,6 +33,5 @@ cd btgfw/c/local-btgfw
 
 ## TODOs
 - support DNS cache
-- support IPv4
 - support IPv6
 - support UDP
