@@ -107,17 +107,17 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			memcpy((char*)&nport, plain_data + 8 + RANDOM_SIZE, SOCKS5_PORT_SIZE);
 			hsport = ntohs(nport);
 
-			memcpy(socket->host, ipv4, ipv4_str_len);
-			socket->host[ipv4_str_len] = '\0';
-			memcpy(target_sock->host, ipv4, ipv4_str_len);
-			target_sock->host[ipv4_str_len] = '\0';
-
 			target_sock = csnet_conntor_connectto(CONNTOR, ipv4, hsport);
 			if (csnet_slow(!target_sock)) {
 				log_error(LOG, "failed to connect target host");
 				free(plain_data);
 				return -1;
 			}
+
+			memcpy(socket->host, ipv4, ipv4_str_len);
+			socket->host[ipv4_str_len] = '\0';
+			memcpy(target_sock->host, ipv4, ipv4_str_len);
+			target_sock->host[ipv4_str_len] = '\0';
 
 			log_debug(LOG, "exhost: socket %d ---> socket %d (%s)",
 				  socket->fd, target_sock->fd, ipv4);

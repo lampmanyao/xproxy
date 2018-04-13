@@ -159,11 +159,6 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 			int ipv4_str_len = sprintf(ipv4, "%d.%d.%d.%d", p0, p1, p2, p3);
 			memcpy(&nport, data + SOCKS5_REQ_HEAD_SIZE + 4, 2);
 
-			memcpy(socket->host, ipv4, ipv4_str_len);
-			socket->host[ipv4_str_len] = '\0';
-			memcpy(remote_sock->host, ipv4, ipv4_str_len);
-			remote_sock->host[ipv4_str_len] = '\0';
-
 			remote_sock = csnet_conntor_connectto(CONNTOR,
 							      remote_host,
 							      remote_port);
@@ -173,6 +168,10 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 				break;
 			}
 
+			memcpy(socket->host, ipv4, ipv4_str_len);
+			socket->host[ipv4_str_len] = '\0';
+			memcpy(remote_sock->host, ipv4, ipv4_str_len);
+			remote_sock->host[ipv4_str_len] = '\0';
 			remote_sock->sock = socket;
 			socket->sock = remote_sock;
 
