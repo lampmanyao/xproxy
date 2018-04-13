@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 
 #if defined(__APPLE__)
 #  include <sys/event.h>
@@ -37,16 +38,14 @@ int
 csnet_listen_port(int port) {
 	int lfd;
 	struct sockaddr_in serv_addr;
+	int reuse = 1;
+	int on = 1;
 
 	lfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (lfd == -1) {
 		debug("socket(): %s", strerror(errno));
 		return -1;
 	}
-
-	int reuse = 1;
-	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &reuse, (socklen_t)sizeof(reuse));
-	/* setsockopt(lfd, SOL_SOCKET, SO_REUSEPORT, &reuse, (socklen_t)sizeof(reuse)); */
 
 	bzero(&serv_addr, sizeof(struct sockaddr_in));
 	serv_addr.sin_family = AF_INET;
@@ -58,6 +57,10 @@ csnet_listen_port(int port) {
 		close(lfd);
 		return -1;
 	}
+
+	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &reuse, (socklen_t)sizeof(reuse));
+	setsockopt(lfd, SOL_SOCKET, SO_REUSEPORT, &reuse, (socklen_t)sizeof(reuse));
+	setsockopt(lfd, IPPROTO_TCP, TCP_FASTOPEN, &on, (socklen_t)sizeof(on));
 
 	if (listen(lfd, BACKLOG) == -1) {
 		debug("listen(): %s", strerror(errno));
@@ -76,6 +79,7 @@ csnet_connect_without_timeout(const char* host, int port) {
 	struct addrinfo* rp;
 	int sock;
 
+	/* Check the host parameter whether is an IP address first. */
 	if (inet_aton(host, &ipv4addr.sin_addr) == 1) {
 		ipv4addr.sin_family = AF_INET;
 		ipv4addr.sin_port = htons(port);
@@ -83,12 +87,22 @@ csnet_connect_without_timeout(const char* host, int port) {
 		if (sock < 0) {
 			return -1;
 		}
+#if defined(__APPLE__)
+		sa_endpoints_t endpoints;
+		bzero((char*)&endpoints, sizeof(endpoints));
+		endpoints.sae_dstaddr = (struct sockaddr *)&ipv4addr;
+		endpoints.sae_dstaddrlen = sizeof(struct sockaddr);
+		if (connectx(sock, &endpoints, SAE_ASSOCID_ANY,
+			     CONNECT_RESUME_ON_READ_WRITE | CONNECT_DATA_IDEMPOTENT,
+			     NULL, 0, NULL, NULL) == 0) {
+#else
 		if (connect(sock, (const struct sockaddr*)&ipv4addr,
-			   sizeof(struct sockaddr)) < 0) {
-			close(sock);
-			return -1;
+			   sizeof(struct sockaddr)) == 0) {
+#endif
+			return sock;
 		}
-		return sock;
+		close(sock);
+		return -1;
 	}
 
 	memset(&hints, 0, sizeof(struct addrinfo));
@@ -110,12 +124,21 @@ csnet_connect_without_timeout(const char* host, int port) {
 		if (sock == -1) {
 			continue;
 		}
-
-		if (connect(sock, rp->ai_addr, rp->ai_addrlen) != -1) {
+#if defined(__APPLE__)
+		sa_endpoints_t endpoints;
+		bzero((char*)&endpoints, sizeof(endpoints));
+		endpoints.sae_dstaddr = rp->ai_addr;
+		endpoints.sae_dstaddrlen = rp->ai_addrlen;
+		if (connectx(sock, &endpoints, SAE_ASSOCID_ANY,
+			     CONNECT_RESUME_ON_READ_WRITE | CONNECT_DATA_IDEMPOTENT,
+			     NULL, 0, NULL, NULL) == 0) {
+#else
+		if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
+#endif
 			break;
+		} else {
+			close(sock);
 		}
-
-		close(sock);
 	}
 
 	freeaddrinfo(result);
@@ -130,6 +153,7 @@ csnet_connect_with_timeout(const char* host, int port, int milliseconds) {
 	struct addrinfo* rp;
 	int sock;
 
+	/* Check the host parameter whether is an IP address first. */
 	if (inet_aton(host, &ipv4addr.sin_addr) == 1) {
 		ipv4addr.sin_family = AF_INET;
 		ipv4addr.sin_port = htons(port);
@@ -137,12 +161,22 @@ csnet_connect_with_timeout(const char* host, int port, int milliseconds) {
 		if (sock < 0) {
 			return -1;
 		}
+#if defined(__APPLE__)
+		sa_endpoints_t endpoints;
+		bzero((char*)&endpoints, sizeof(endpoints));
+		endpoints.sae_dstaddr = (struct sockaddr *)&ipv4addr;
+		endpoints.sae_dstaddrlen = sizeof(struct sockaddr);
+		if (connectx(sock, &endpoints, SAE_ASSOCID_ANY,
+			     CONNECT_RESUME_ON_READ_WRITE | CONNECT_DATA_IDEMPOTENT,
+			     NULL, 0, NULL, NULL) == 0) {
+#else
 		if (connect(sock, (const struct sockaddr*)&ipv4addr,
-			   sizeof(struct sockaddr)) < 0) {
-			close(sock);
-			return -1;
+			   sizeof(struct sockaddr)) == 0) {
+#endif
+			return sock;
 		}
-		return sock;
+		close(sock);
+		return -1;
 	}
 
 	memset(&hints, 0, sizeof(struct addrinfo));
@@ -167,49 +201,61 @@ csnet_connect_with_timeout(const char* host, int port, int milliseconds) {
 
 		csnet_set_nonblocking(sock);
 
-		if (connect(sock, rp->ai_addr, rp->ai_addrlen) == -1) {
-			if (errno == EINPROGRESS) {
-				struct pollfd pollfd;
-				pollfd.fd = sock;
-				pollfd.events = POLLIN | POLLOUT;
+#if defined(__APPLE__)
+		sa_endpoints_t endpoints;
+		bzero((char*)&endpoints, sizeof(endpoints));
+		endpoints.sae_dstaddr = rp->ai_addr;
+		endpoints.sae_dstaddrlen = rp->ai_addrlen;
+		if (connectx(sock, &endpoints, SAE_ASSOCID_ANY,
+			     CONNECT_RESUME_ON_READ_WRITE | CONNECT_DATA_IDEMPOTENT,
+			     NULL, 0, NULL, NULL) == 0) {
+#else
+		if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
+#endif
+			break;
+		}
 
-				/* If the remote host is down or network issue,
-				   poll() will block `milliseconds` here */
+		if (errno == EINPROGRESS || errno == EINTR) {
+			struct pollfd pollfd;
+			pollfd.fd = sock;
+			pollfd.events = POLLIN | POLLOUT;
 
-				int nready = poll(&pollfd, 1, milliseconds);
-				if (nready < 0) {
-					debug("poll(): %s. %s:%d", strerror(errno), host, port);
-					close(sock);
-					continue;
-				}
+			/* If the remote host is down or network issue,
+			   poll() will block `milliseconds` here */
 
-				if (nready == 0) {
-					debug("poll() timeout: 100 milliseconds. %s:%d", host, port);
-					close(sock);
-					continue;
-				}
-
-				int result;
-				socklen_t result_len = sizeof(result);
-
-				if (getsockopt(pollfd.fd, SOL_SOCKET, SO_ERROR, &result, &result_len) < 0) {
-					close(sock);
-					continue;
-				}
-
-				if (result != 0) {
-					debug("SO_ERROR: %d. %s:%d", result, host, port);
-					close(sock);
-					continue;
-				}
-				break;
-			} else {
-				debug("connect to host: %s, port: %d error: %s", host, port, strerror(errno));
+			int nready = poll(&pollfd, 1, milliseconds);
+			if (nready < 0) {
+				debug("poll(): %s. %s:%d", strerror(errno), host, port);
 				close(sock);
 				continue;
 			}
+
+			if (nready == 0) {
+				debug("poll() timeout: 100 milliseconds. %s:%d", host, port);
+				close(sock);
+				continue;
+			}
+
+			int result;
+			socklen_t result_len = sizeof(result);
+
+			if (getsockopt(pollfd.fd, SOL_SOCKET, SO_ERROR, &result, &result_len) < 0) {
+				close(sock);
+				continue;
+			}
+
+			if (result != 0) {
+				debug("SO_ERROR: %d. %s:%d", result, host, port);
+				close(sock);
+				continue;
+			}
+			break;
+		} else {
+			debug("connect to host: %s, port: %d error: %s", host, port, strerror(errno));
+			close(sock);
+			continue;
 		}
-	}
+	} /* EOF for() */
 
 	freeaddrinfo(result);
 	return (rp == NULL) ? -1 : sock;
@@ -219,51 +265,4 @@ void
 csnet_wait_milliseconds(int milliseconds) {
 	poll(NULL, 0, milliseconds);
 }
-
-/*
-void
-csnet_epoll_modin(int epfd, int socket, unsigned int sid) {
-	struct epoll_event ev = {
-		.events = EPOLLIN,
-		.data.u32 = sid
-	};
-	epoll_ctl(epfd, EPOLL_CTL_MOD, socket, &ev);
-}
-
-void
-csnet_epoll_modout(int epfd, int socket, unsigned int sid) {
-	struct epoll_event ev = {
-		.events = EPOLLOUT,
-		.data.u32 = sid
-	};
-	epoll_ctl(epfd, EPOLL_CTL_MOD, socket, &ev);
-}
-
-void
-csnet_epoll_modinout(int epfd, int socket, unsigned int sid) {
-	struct epoll_event ev = {
-		.events = EPOLLIN | EPOLLOUT,
-		.data.u32 = sid
-	};
-	epoll_ctl(epfd, EPOLL_CTL_MOD, socket, &ev);
-}
-
-void
-csnet_epoll_modadd(int epfd, int socket, unsigned int sid) {
-	struct epoll_event ev = {
-		.events = EPOLLIN,
-		.data.u32 = sid
-	};
-	epoll_ctl(epfd, EPOLL_CTL_ADD, socket, &ev);
-}
-
-void
-csnet_epoll_moddel(int epfd, int socket, unsigned int sid) {
-	struct epoll_event ev = {
-		.events = EPOLLIN,
-		.data.u32 = sid
-	};
-	epoll_ctl(epfd, EPOLL_CTL_DEL, socket, &ev);
-}
-*/
 
