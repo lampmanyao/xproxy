@@ -47,6 +47,8 @@ business_init(struct csnet_conntor* conntor, struct cs_lfqueue* q,
 	remote_host = host;
 	remote_port = atoi(port);
 
+	csnet_crypt_set_iv(passwd);
+
 	log_info(log, "business init done ...");
 
 	return 0;

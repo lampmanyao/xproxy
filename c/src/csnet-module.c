@@ -56,7 +56,7 @@ csnet_module_load(struct csnet_module* m, const char* module) {
 		log_fatal(m->log, "%s", dlerror());
 	}
 
-	csnet_md5sum(module, m->md5);
+	csnet_file_md5(module, m->md5);
 	m->md5[16] = '\0';
 	m->business_init(m->conntor, m->q, m->log, m->config);
 }

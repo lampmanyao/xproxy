@@ -18,7 +18,7 @@
 #endif
 
 int
-csnet_md5sum(const char* path, unsigned char* buff) {
+csnet_file_md5(const char* path, unsigned char* buff) {
 	FILE* file = fopen(path, "rb");
 	if (!file) {
 		return -1;
@@ -34,6 +34,15 @@ csnet_md5sum(const char* path, unsigned char* buff) {
 	}
 	MD5_Final(buff, &md5_ctx);
 	fclose(file);
+	return 0;
+}
+
+int
+csnet_md5(const char* str, unsigned char* buff) {
+	MD5_CTX md5_ctx;
+	MD5_Init(&md5_ctx);
+	MD5_Update(&md5_ctx, str, strlen(str));
+	MD5_Final(buff, &md5_ctx);
 	return 0;
 }
 

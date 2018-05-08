@@ -32,6 +32,8 @@ business_init(struct csnet_conntor* conntor, struct cs_lfqueue* q,
 		log_fatal(LOG, "cant find `password` in config file");
 	}
 
+	csnet_crypt_set_iv(passwd);
+
 	log_debug(log, "business init done ...");
 	return 0;
 }

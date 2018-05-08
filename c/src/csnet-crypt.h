@@ -2,6 +2,7 @@
 
 void csnet_crypt_setup(void);
 void csnet_crypt_cleanup(void);
+void csnet_crypt_set_iv(const char* password);
 
 /*
  * Return value:

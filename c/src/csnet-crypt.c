@@ -1,4 +1,5 @@
 #include "csnet-crypt.h"
+#include "csnet-utils.h"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -8,7 +9,7 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 
-static unsigned char* IV = (unsigned char*)"02ALC9WG8!T28YD*OAWcBAuI";
+static unsigned char IV[17];
 static pthread_mutex_t* lock_cs;
 static long* lock_count;
 
@@ -65,6 +66,12 @@ csnet_crypt_cleanup(void) {
 	OPENSSL_free(lock_cs);
 	OPENSSL_free(lock_count);
 	ERR_free_strings();
+}
+
+void
+csnet_crypt_set_iv(const char* password) {
+	csnet_md5(password, IV);
+	IV[16] = '\0';
 }
 
 int

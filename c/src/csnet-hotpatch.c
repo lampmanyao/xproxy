@@ -90,7 +90,7 @@ int csnet_hotpatch_do_patching(struct csnet_hotpatch* hp) {
 	struct cs_pqnode* highest = cs_pqueue_pop(pq);
 	if (highest) {
 		unsigned char new_md5[17];
-		csnet_md5sum(highest->value, new_md5);
+		csnet_file_md5(highest->value, new_md5);
 		new_md5[16] = '\0';
 
 		if (strcmp((char*)new_md5, (char*)hp->module->md5) == 0) {
