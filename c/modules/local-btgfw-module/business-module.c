@@ -9,8 +9,8 @@
 
 #define RANDOM_SIZE sizeof(int64_t)
 
-static int client_handler(struct csnet_socket* socket, int state, char* data, int data_len);
-static int remote_handler(struct csnet_socket* socket, int state, char* data, int data_len);
+static int client_handler(struct csnet_socket* client_sock, int state, char* data, int data_len);
+static int remote_handler(struct csnet_socket* remote_sock, int state, char* data, int data_len);
 
 struct csnet_log* LOG = NULL;
 struct cs_lfqueue* Q = NULL;
@@ -69,7 +69,7 @@ business_entry(struct csnet_socket* socket, int state, char* data, int data_len)
 }
 
 static int
-client_handler(struct csnet_socket* socket, int state, char* data, int data_len) {
+client_handler(struct csnet_socket* client_sock, int state, char* data, int data_len) {
 	int ret = 0;
 
 	switch (state) {
@@ -107,12 +107,12 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 
 		int8_t methods = data[2];
 
-		struct csnet_msg* msg = csnet_msg_new(2, socket);
+		struct csnet_msg* msg = csnet_msg_new(2, client_sock);
 		csnet_msg_append(msg, (char*)&ver, 1);
 		csnet_msg_append(msg, (char*)&methods, 1);
 		csnet_sendto(Q, msg);
 
-		socket->state = SOCKS5_ST_EXHOST;
+		client_sock->state = SOCKS5_ST_EXHOST;
 		ret = 2 + nmethods;
 		break;
 	}
@@ -170,12 +170,12 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 				break;
 			}
 
-			memcpy(socket->host, ipv4, ipv4_str_len);
-			socket->host[ipv4_str_len] = '\0';
+			memcpy(client_sock->host, ipv4, ipv4_str_len);
+			client_sock->host[ipv4_str_len] = '\0';
 			memcpy(remote_sock->host, ipv4, ipv4_str_len);
 			remote_sock->host[ipv4_str_len] = '\0';
-			remote_sock->sock = socket;
-			socket->sock = remote_sock;
+			remote_sock->sock = client_sock;
+			client_sock->sock = remote_sock;
 
 			int64_t randnum = random();
 
@@ -200,8 +200,8 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 
 			free(cipher_data);
 
-			socket->state = SOCKS5_ST_STREAMING;
-			socket->sock->state = SOCKS5_ST_EXHOST;
+			client_sock->state = SOCKS5_ST_STREAMING;
+			remote_sock->state = SOCKS5_ST_EXHOST;
 
 			ret = SOCKS5_IPV4_REQ_SIZE;
 		} else if (atyp == SOCKS5_ATYP_DONAME) {
@@ -237,16 +237,16 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 				break;
 			}
 
-			memcpy(socket->host, domain_name, domain_name_len);
-			socket->host[domain_name_len] = '\0';
+			memcpy(client_sock->host, domain_name, domain_name_len);
+			client_sock->host[domain_name_len] = '\0';
 			memcpy(remote_sock->host, domain_name, domain_name_len);
 			remote_sock->host[domain_name_len] = '\0';
 
 			log_debug(LOG, "exhost: socket %d ---> socket %d (%s)",
-				  socket->fd, remote_sock->fd, domain_name);
+				  client_sock->fd, remote_sock->fd, domain_name);
 
-			remote_sock->sock = socket;
-			socket->sock = remote_sock;
+			remote_sock->sock = client_sock;
+			client_sock->sock = remote_sock;
 
 			int64_t randnum = random();
 			memcpy(request, &randnum, RANDOM_SIZE);
@@ -259,7 +259,7 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 								   passwd);
 			if (cipher_data_len < 0) {
 				log_error(LOG, "encrypt error. socket %d ---> socket %d (%s)",
-					  socket->fd, remote_sock->fd, domain_name);
+					  client_sock->fd, remote_sock->fd, domain_name);
 				ret = -1;
 				break;
 			}
@@ -271,8 +271,8 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 
 			free(cipher_data);
 
-			socket->sock->state = SOCKS5_ST_EXHOST;
-			socket->state = SOCKS5_ST_STREAMING;
+			remote_sock->state = SOCKS5_ST_EXHOST;
+			client_sock->state = SOCKS5_ST_STREAMING;
 			ret = exhost_data_len;
 		} else if (atyp == SOCKS5_ATYP_IPv6) {
 			log_debug(LOG, "address type is IPv6, not support yet");
@@ -285,13 +285,14 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 	}
 
 	case SOCKS5_ST_STREAMING: {
+		struct csnet_socket* remote_sock = client_sock->sock;
 		struct csnet_msg* msg;
-		msg = csnet_msg_new(data_len, socket->sock);
+		msg = csnet_msg_new(data_len, remote_sock);
 		csnet_msg_append(msg, data, data_len);
 		csnet_sendto(Q, msg);
 
 		log_debug(LOG, "streaming: socket %d ---> socket %d (%s)",
-			  socket->fd, socket->sock->fd, socket->sock->host);
+			  client_sock->fd, remote_sock->fd, remote_sock->host);
 
 		ret = data_len;
 		break;
@@ -304,14 +305,15 @@ client_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 	}
 
 	log_debug(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
-		  socket->fd, data_len, ret, data_len - ret);
+		  client_sock->fd, data_len, ret, data_len - ret);
 
 	return ret;
 }
 
 static int
-remote_handler(struct csnet_socket* socket, int state, char* data, int data_len) {
+remote_handler(struct csnet_socket* remote_sock, int state, char* data, int data_len) {
 	int ret = 0;
+	struct csnet_socket* client_sock = remote_sock->sock;
 
 	switch (state) {
 	case SOCKS5_ST_EXHOST: {
@@ -341,7 +343,7 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 						      passwd);
 		if (plain_data_len < 0) {
 			log_error(LOG, "decrypt error. exhost: %d <--- socket %d (%s)",
-				  socket->sock->fd, socket->fd, socket->host);
+				  client_sock->fd, remote_sock->fd, remote_sock->host);
 			ret = -1;
 			break;
 		}
@@ -353,18 +355,18 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 
 		if (typ == SOCKS5_ATYP_IPv4) {
 			memcpy(reply, plain_data + RANDOM_SIZE, 10);
-			msg = csnet_msg_new(10, socket->sock);
+			msg = csnet_msg_new(10, client_sock);
 			csnet_msg_append(msg, reply, 10);
 			csnet_sendto(Q, msg);
 		} else if (typ == SOCKS5_ATYP_DONAME) {
 			uint8_t domain_name_len = plain_data[SOCKS5_RSP_HEAD_SIZE + RANDOM_SIZE];
 			ret = SOCKS5_RSP_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE;
 			memcpy(reply, plain_data + RANDOM_SIZE, ret);
-			msg = csnet_msg_new(ret, socket->sock);
+			msg = csnet_msg_new(ret, client_sock);
 			csnet_msg_append(msg, reply, ret);
 			csnet_sendto(Q, msg);
 			log_debug(LOG, "exhost: socket %d <--- socket %d (%s)",
-				  socket->sock->fd, socket->fd, socket->host);
+				  client_sock->fd, remote_sock->fd, remote_sock->host);
 		} else if (typ == SOCKS5_ATYP_IPv6) {
 			ret = -1;
 			break;
@@ -372,20 +374,20 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 
 		free(plain_data);
 
-		socket->sock->state = SOCKS5_ST_STREAMING;
-		socket->state = SOCKS5_ST_STREAMING;
+		client_sock->state = SOCKS5_ST_STREAMING;
+		remote_sock->state = SOCKS5_ST_STREAMING;
 		ret = 4 + cipher_data_len;
  		break;
 	}
 
 	case SOCKS5_ST_STREAMING: {
 		struct csnet_msg* msg;
-		msg = csnet_msg_new(data_len, socket->sock);
+		msg = csnet_msg_new(data_len, client_sock);
 		csnet_msg_append(msg, data, data_len);
 		csnet_sendto(Q, msg);
 
 		log_debug(LOG, "streaming: socket %d <--- socket %d (%s)",
-			  socket->sock->fd, socket->fd, socket->host);
+			  client_sock->fd, remote_sock->fd, remote_sock->host);
 		ret = data_len;
 		break;
 	}
@@ -396,7 +398,7 @@ remote_handler(struct csnet_socket* socket, int state, char* data, int data_len)
 	}
 
 	log_debug(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
-		  socket->fd, data_len, ret, data_len - ret);
+		  remote_sock->fd, data_len, ret, data_len - ret);
 
 	return ret;
 }
