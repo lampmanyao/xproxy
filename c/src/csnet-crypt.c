@@ -77,11 +77,10 @@ csnet_crypt_set_iv(const char* password) {
 int
 csnet_128cfb_encrypt(char** cipherdata,
 		     char* plaindata, unsigned int length, const char* key) {
-	EVP_CIPHER_CTX ctx;
-	EVP_CIPHER_CTX_init(&ctx);
+	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
 
-	if (EVP_EncryptInit_ex(&ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
+	if (EVP_EncryptInit_ex(ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
 		return -1;
 	}
 
@@ -89,31 +88,30 @@ csnet_128cfb_encrypt(char** cipherdata,
 	int cipherdata_len = 0;
 	*cipherdata = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_EncryptUpdate(&ctx, (unsigned char*)*cipherdata, &len,
+	if (EVP_EncryptUpdate(ctx, (unsigned char*)*cipherdata, &len,
 			      (unsigned char*)plaindata, length) != 1) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
+		EVP_CIPHER_CTX_free(ctx);
 		free(*cipherdata);
 		return -1;
 	}
 	cipherdata_len = len;
-	if (EVP_EncryptFinal_ex(&ctx, (unsigned char*)(*cipherdata) + len, &len) != 1) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
+	if (EVP_EncryptFinal_ex(ctx, (unsigned char*)(*cipherdata) + len, &len) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
 		free(*cipherdata);
 		return -1;
 	}
 	cipherdata_len += len;
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	EVP_CIPHER_CTX_free(ctx);
 	return cipherdata_len;
 }
 
 int
 csnet_128cfb_decrypt(char** plaindata,
 		     char* cipherdata, unsigned int length, const char* key) {
-	EVP_CIPHER_CTX ctx;
-	EVP_CIPHER_CTX_init(&ctx);
+	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
 
-	if (EVP_DecryptInit_ex(&ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
+	if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
 		return -1;
 	}
 
@@ -121,20 +119,20 @@ csnet_128cfb_decrypt(char** plaindata,
 	int plaindata_len = 0;
 	*plaindata = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_DecryptUpdate(&ctx, (unsigned char*)*plaindata, &len,
+	if (EVP_DecryptUpdate(ctx, (unsigned char*)*plaindata, &len,
 			      (unsigned char*)cipherdata, length) != 1) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
+		EVP_CIPHER_CTX_free(cctx);
 		free(*plaindata);
 		return -1;
 	}
 	plaindata_len = len;
-	if (EVP_DecryptFinal_ex(&ctx, (unsigned char*)(*plaindata) + len, &len) != 1) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
+	if (EVP_DecryptFinal_ex(ctx, (unsigned char*)(*plaindata) + len, &len) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
 		free(*plaindata);
 		return -1;
 	}
 	plaindata_len += len;
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	EVP_CIPHER_CTX_free(ctx);
 	return plaindata_len;
 }
 
