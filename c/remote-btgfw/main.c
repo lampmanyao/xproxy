@@ -17,6 +17,7 @@ int main(int argc, char** argv)
 
 	csnet_signals_init();
 	csnet_coredump_init();
+	csnet_crypt_setup();
 
 	/*
 	daemon(1, 1);
