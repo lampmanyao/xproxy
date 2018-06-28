@@ -121,7 +121,7 @@ csnet_128cfb_decrypt(char** plaindata,
 
 	if (EVP_DecryptUpdate(ctx, (unsigned char*)*plaindata, &len,
 			      (unsigned char*)cipherdata, length) != 1) {
-		EVP_CIPHER_CTX_free(cctx);
+		EVP_CIPHER_CTX_free(ctx);
 		free(*plaindata);
 		return -1;
 	}
