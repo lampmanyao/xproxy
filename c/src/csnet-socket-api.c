@@ -46,6 +46,10 @@ csnet_listen_port(int port) {
 		debug("socket(): %s", strerror(errno));
 		return -1;
 	}
+	
+	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &reuse, (socklen_t)sizeof(reuse));
+	setsockopt(lfd, SOL_SOCKET, SO_REUSEPORT, &reuse, (socklen_t)sizeof(reuse));
+	setsockopt(lfd, IPPROTO_TCP, TCP_FASTOPEN, &on, (socklen_t)sizeof(on));
 
 	bzero(&serv_addr, sizeof(struct sockaddr_in));
 	serv_addr.sin_family = AF_INET;
@@ -57,10 +61,6 @@ csnet_listen_port(int port) {
 		close(lfd);
 		return -1;
 	}
-
-	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &reuse, (socklen_t)sizeof(reuse));
-	setsockopt(lfd, SOL_SOCKET, SO_REUSEPORT, &reuse, (socklen_t)sizeof(reuse));
-	setsockopt(lfd, IPPROTO_TCP, TCP_FASTOPEN, &on, (socklen_t)sizeof(on));
 
 	if (listen(lfd, BACKLOG) == -1) {
 		debug("listen(): %s", strerror(errno));
