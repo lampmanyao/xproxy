@@ -29,7 +29,7 @@ csnet_rb_new(unsigned int size) {
 	}
 
 	rb->capacity = size;
-	rb->data_len = 0;
+	rb->len = 0;
 	rb->seek = 0;
 
 	rb->buffer = calloc(1, size);
@@ -48,7 +48,7 @@ csnet_rb_free(struct csnet_rb* rb) {
 
 int
 csnet_rb_append(struct csnet_rb* rb, const char* data, unsigned int len) {
-	unsigned int remain = rb->capacity - rb->data_len;
+	unsigned int remain = rb->capacity - rb->len;
 
 	if (remain < len) {
 		/* insufficient space, make a new memory */
@@ -58,19 +58,19 @@ csnet_rb_append(struct csnet_rb* rb, const char* data, unsigned int len) {
 			csnet_oom(rb->capacity + len);
 		}
 
-		if (rb->data_len == 0) {
+		if (rb->len == 0) {
 			memcpy(new_buffer, data, len);
 		} else {
-			memcpy(new_buffer, rb->buffer, rb->data_len);
-			memcpy(new_buffer + rb->data_len, data, len);
+			memcpy(new_buffer, rb->buffer, rb->len);
+			memcpy(new_buffer + rb->len, data, len);
 		}
 
 		free(rb->buffer);
 		rb->buffer = new_buffer;
-		rb->data_len += len;
+		rb->len += len;
 	} else {
-		memcpy(rb->buffer + rb->data_len, data, len);
-		rb->data_len += len;
+		memcpy(rb->buffer + rb->len, data, len);
+		rb->len += len;
 	}
 
 	return 0;
@@ -78,15 +78,15 @@ csnet_rb_append(struct csnet_rb* rb, const char* data, unsigned int len) {
 
 unsigned int
 csnet_rb_seek(struct csnet_rb* rb, unsigned int len) {
-	if (csnet_slow(len > rb->data_len)) {
-		fatal("len > rb->data_len");
+	if (csnet_slow(len > rb->len)) {
+		fatal("len > rb->len");
 	}
 
-	if (len == rb->data_len) {
-		rb->data_len = 0;
+	if (len == rb->len) {
+		rb->len = 0;
 	} else {
-		rb->data_len -= len;
-		memmove(rb->buffer, rb->buffer + len, rb->data_len);
+		rb->len -= len;
+		memmove(rb->buffer, rb->buffer + len, rb->len);
 	}
 	return 0;
 }
@@ -97,12 +97,12 @@ csnet_rb_data(struct csnet_rb* rb) {
 }
 
 inline unsigned int
-csnet_rb_data_len(struct csnet_rb* rb) {
-	return rb->data_len;
+csnet_rb_len(struct csnet_rb* rb) {
+	return rb->len;
 }
 
 void
 csnet_rb_reset(struct csnet_rb* rb) {
-	rb->data_len = 0;
+	rb->len = 0;
 }
 

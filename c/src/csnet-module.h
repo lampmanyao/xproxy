@@ -9,7 +9,7 @@ struct cs_lfqueue;
 struct csnet_log;
 
 typedef int (*module_init_cb) (void* conntor, struct cs_lfqueue* q, struct csnet_log* log, struct csnet_config* config);
-typedef int (*module_entry_cb) (struct csnet_socket* socket, int state, char* data, int data_len);
+typedef int (*module_entry_cb) (struct csnet_socket* socket, int state, char* data, int len);
 typedef void (*module_term_cb) (void);
 
 struct csnet_module {
@@ -31,7 +31,6 @@ void csnet_module_term(struct csnet_module*);
 void csnet_module_load(struct csnet_module*, const char* module);
 void csnet_module_ref_increment(struct csnet_module*);
 void csnet_module_ref_decrement(struct csnet_module*);
-int csnet_module_entry(struct csnet_module*, struct csnet_socket* socket,
-                        int state, char* data, int data_len);
+int csnet_module_entry(struct csnet_module*, struct csnet_socket* socket, int state, char* data, int len);
 void csnet_module_free(struct csnet_module*);
 

@@ -99,25 +99,25 @@ int main(int argc, char** argv)
 	business_module = csnet_config_find(config, "business-module", strlen("business-module"));
 
 	if (!myport) {
-		log_fatal(logger, "could not find `myport`!");
+		log_f(logger, "could not find `myport`!");
 	}
 	if (!remote_host) {
-		log_fatal(logger, "could not find `remote_host`!");
+		log_f(logger, "could not find `remote_host`!");
 	}
 	if (!remote_port) {
-		log_fatal(logger, "could not find `remote_port`!");
+		log_f(logger, "could not find `remote_port`!");
 	}
 
 	if (!maxconn) {
-		log_fatal(logger, "could not find `maxconn`!");
+		log_f(logger, "could not find `maxconn`!");
 	}
 
 	if (!threadcount) {
-		log_fatal(logger, "could not find `threadcount`!");
+		log_f(logger, "could not find `threadcount`!");
 	}
 
 	if (!business_module) {
-		log_fatal(logger, "could not find `business-module`!");
+		log_f(logger, "could not find `business-module`!");
 	}
 
 	q = cs_lfqueue_new();
@@ -128,7 +128,7 @@ int main(int argc, char** argv)
 	csnet = csnet_new(atoi(myport), atoi(threadcount), atoi(maxconn), logger, module, q);
 	hotpatch = csnet_hotpatch_new(module, q, csnet, NULL, logger, config);
 
-	log_info(logger, "Server start ok ...");
+	log_i(logger, "Server start ok ...");
 
 	csnet_conntor_loop(conntor);
 	csnet_loop(csnet, -1);

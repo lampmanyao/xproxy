@@ -159,16 +159,6 @@ csnet_openfiles_init(int max) {
 	return setrlimit(RLIMIT_NOFILE, &rlimit);
 }
 
-volatile int running = 1;
-
-static void
-ctrlc_handle(int num) {
-	if (num == 2) {
-		debug("catch SIGINI");
-		running = 0;
-	}
-}
-
 void
 csnet_signals_init(void) {
 	signal(SIGHUP, SIG_IGN);
@@ -177,7 +167,6 @@ csnet_signals_init(void) {
 	signal(SIGTTIN, SIG_IGN);
 	signal(SIGCHLD, SIG_IGN);
 	signal(SIGTERM, SIG_IGN);
-	//signal(SIGINT,  SIG_IGN);
-	signal(SIGINT,  ctrlc_handle);
+	signal(SIGINT,  SIG_IGN);
 }
 

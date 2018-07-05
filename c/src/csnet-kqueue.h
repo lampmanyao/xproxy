@@ -85,7 +85,7 @@ csnet_epoller_del(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 }
 
 static int
-csnet_epoller_mod_read(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_epoller_r(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 	struct kevent64_s ke;
 
 	memset(&ke, 0, sizeof(ke));
@@ -96,7 +96,7 @@ csnet_epoller_mod_read(struct csnet_epoller* epoller, int fd, unsigned int sid) 
 }
 
 static int
-csnet_epoller_mod_write(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_epoller_w(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 	struct kevent64_s ke;
 
 	memset(&ke, 0, sizeof(ke));
@@ -106,7 +106,7 @@ csnet_epoller_mod_write(struct csnet_epoller* epoller, int fd, unsigned int sid)
 }
 
 static int
-csnet_epoller_mod_rw(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_epoller_rw(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 	struct kevent64_s ke;
 
 	memset(&ke, 0, sizeof(ke));
@@ -142,17 +142,17 @@ csnet_epoller_get_event(struct csnet_epoller* epoller, int index) {
 }
 
 static bool
-csnet_epoller_event_is_readable(csnet_epoller_event_t* event) {
+csnet_epoller_event_is_r(csnet_epoller_event_t* event) {
 	return event->flags & EVFILT_READ;
 }
 
 static bool
-csnet_epoller_event_is_writeable(csnet_epoller_event_t* event) {
+csnet_epoller_event_is_w(csnet_epoller_event_t* event) {
 	return event->flags & EVFILT_WRITE;
 }
 
 static bool
-csnet_epoller_event_is_error(csnet_epoller_event_t* event) {
+csnet_epoller_event_is_e(csnet_epoller_event_t* event) {
 	return (event->flags & EV_ERROR) || (event->flags & EV_EOF);
 }
 

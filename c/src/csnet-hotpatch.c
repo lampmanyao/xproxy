@@ -23,12 +23,11 @@
 #include <sys/mman.h>
 
 static int hotpatching(void* target, void* replacement);
-extern volatile int running;
 
 static void*
 csnet_hotpatch_thread(void* arg) {
 	struct csnet_hotpatch* hp = arg;
-	while (running) {
+	while (1) {
 		csnet_hotpatch_do_patching(hp);
 		sleep(10);
 	}
@@ -113,12 +112,12 @@ int csnet_hotpatch_do_patching(struct csnet_hotpatch* hp) {
 			}
 			csnet_module_term(old_module);
 			csnet_module_free(old_module);
-			log_info(hp->log, "hotpatch done");
+			log_i(hp->log, "hotpatch done");
 			ret = 0;
 			goto out;
 		}
 
-		log_error(hp->log, "hotpatch failed");
+		log_e(hp->log, "hotpatch failed");
 		ret = -1;
 	}
 

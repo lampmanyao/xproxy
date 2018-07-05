@@ -2,7 +2,7 @@
 
 struct csnet_rb {
 	unsigned int capacity;
-	unsigned int data_len;
+	unsigned int len;
 	unsigned int seek;
 	char* buffer;
 };
@@ -13,5 +13,5 @@ int csnet_rb_append(struct csnet_rb*, const char* data, unsigned int len);
 unsigned int csnet_rb_seek(struct csnet_rb*, unsigned int len);
 void csnet_rb_reset(struct csnet_rb*);
 char* csnet_rb_data(struct csnet_rb*);
-unsigned int csnet_rb_data_len(struct csnet_rb*);
+unsigned int csnet_rb_len(struct csnet_rb*);
 

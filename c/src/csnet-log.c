@@ -21,8 +21,6 @@
 #define LOG_NAME_LEN 1024
 #define N_ELEMENTS   100
 
-extern volatile int running;
-
 typedef struct log_buffer {
 	int seek;
 	int remain;
@@ -141,13 +139,13 @@ _format_time(struct csnet_log* log, char* time_buff) {
 		log->last_sec = tv.tv_sec;
 	}
 
-	sprintf(time_buff, "%s,%06d", log->last_timestamp, (int)tv.tv_usec);
+	sprintf(time_buff, "%s.%06d", log->last_timestamp, (int)tv.tv_usec);
 }
 
 static void*
 csnet_log_flush_to_disk_thread(void* arg) {
 	struct csnet_log* log = (struct csnet_log*)arg;
-	while (running) {
+	while (1) {
 		if (log->head == log->tail) {
 			csnet_cond_nonblocking_wait(&log->cond, 1, 0);
 		}
