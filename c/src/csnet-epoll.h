@@ -74,7 +74,7 @@ csnet_epoller_del(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 static int
 csnet_epoller_mod_read(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 	struct epoll_event ev = {
-		.events = EPOLLOUT | EPOLLET,
+		.events = EPOLLIN | EPOLLET,
 		.data.u64 = (unsigned long)fd << 32 | sid
 	};
 	return epoll_ctl(epoller->fd, EPOLL_CTL_MOD, fd, &ev);
