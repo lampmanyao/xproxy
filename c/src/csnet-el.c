@@ -126,8 +126,8 @@ csnet_el_free(struct csnet_el* el) {
 
 static void
 readable_event(struct csnet_el* el, struct csnet_socket* socket) {
-	int nrecv = csnet_socket_recv(socket);
-	if (csnet_fast(nrecv > 0)) {
+	int r = csnet_socket_recv(socket);
+	if (csnet_fast(r > 0)) {
 		char* data = csnet_rb_data(socket->rb);
 		unsigned int len = csnet_rb_len(socket->rb);
 		int state = socket->state;
@@ -135,7 +135,6 @@ readable_event(struct csnet_el* el, struct csnet_socket* socket) {
 
 		if (rt != -1) {
 			csnet_rb_seek(socket->rb, rt);
-			csnet_epoller_r(el->epoller, socket->fd, socket->sid);
 		} else {
 			log_e(el->log, "module return error, closing socket %d (%s)",
 				  socket->fd, socket->host);
@@ -143,6 +142,9 @@ readable_event(struct csnet_el* el, struct csnet_socket* socket) {
 			csnet_sockset_reset_socket(el->sockset, socket->sid);
 			el->cur_conn--;
 		}
+	} else if (r == 0) {
+		log_i(el->log, "client socket %d receive buffer is full, wait for next time", socket->fd);
+		csnet_epoller_r(el->epoller, socket->fd, socket->sid);
 	} else {
 		log_w(el->log, "client peer close, closing socket %d (%s)",
 			 socket->fd, socket->host);
