@@ -42,7 +42,6 @@ int main(int argc, char** argv)
 	struct csnet_config* config;
 	struct csnet_module* module;
 	struct csnet_conntor* conntor;
-	struct csnet_hotpatch* hotpatch;
 
 	config = csnet_config_new();
 	csnet_config_load(config, conf_file);
@@ -116,7 +115,6 @@ int main(int argc, char** argv)
 	csnet_module_init(module, conntor, q, logger, config);
 	csnet_module_load(module, business_module);
 	csnet = csnet_new(atoi(myport), atoi(threadcount), atoi(maxconn), logger, module, q);
-	hotpatch = csnet_hotpatch_new(module, q, csnet, NULL, logger, config);
 
 	log_i(logger, "Server start ok ...");
 
@@ -128,7 +126,6 @@ int main(int argc, char** argv)
 	csnet_config_free(config);
 	csnet_module_free(module);
 	csnet_conntor_free(conntor);
-	csnet_hotpatch_free(hotpatch);
 	csnet_log_free(logger);
 
         return 0;

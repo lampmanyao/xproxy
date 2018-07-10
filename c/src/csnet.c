@@ -96,7 +96,11 @@ csnet_dispatch_thread(void* arg) {
 		struct csnet_msg* msg = NULL;
 		int ret = cs_lfqueue_deq(q, (void*)&msg);
 		if (csnet_fast(ret == 0)) {
-			csnet_socket_send(msg->socket, msg->data, msg->size);
+			int s = csnet_socket_send(msg->socket, msg->data, msg->size);
+			if (s < 0) {
+				log_e(csnet->log, "send to socket %d failed",
+				      msg->socket->fd);
+			}
 			csnet_msg_free(msg);
 		} else {
 #if defined(__APPLE__)

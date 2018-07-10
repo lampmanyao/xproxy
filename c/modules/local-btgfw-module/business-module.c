@@ -9,8 +9,8 @@
 
 #define RANDOM_SIZE sizeof(int64_t)
 
-static int client_handler(struct csnet_socket* client_sock, int state, char* data, int len);
-static int remote_handler(struct csnet_socket* remote_sock, int state, char* data, int len);
+static int client_handler(struct csnet_socket* client_sock, int stage, char* data, int len);
+static int remote_handler(struct csnet_socket* remote_sock, int stage, char* data, int len);
 
 struct csnet_log* LOG = NULL;
 struct cs_lfqueue* Q = NULL;
@@ -60,22 +60,21 @@ business_term(void) {
 }
 
 int
-business_entry(struct csnet_socket* socket, int state, char* data, int len) {
+business_entry(struct csnet_socket* socket, int stage, char* data, int len) {
 	if (socket->type == BTGFW_CLIENT) {
-		return client_handler(socket, state, data, len);
+		return client_handler(socket, stage, data, len);
 	} else {
-		return remote_handler(socket, state, data, len);
+		return remote_handler(socket, stage, data, len);
 	}
 }
 
 static int
-client_handler(struct csnet_socket* client_sock, int state, char* data, int len) {
+client_handler(struct csnet_socket* client_sock, int stage, char* data, int len) {
 	int ret = 0;
 
-	switch (state) {
-	case SOCKS5_ST_EXMETHOD: {
+	switch (stage) {
+	case SOCKS5_STAGE_EXMETHOD: {
 		if (csnet_slow(len <= 2)) {
-			log_d(LOG, "not complete data, wait for more");
 			ret = 0;
 			break;
 		}
@@ -90,7 +89,6 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 		}
 
 		if (csnet_slow(len < nmethods + 2)) {
-			log_d(LOG, "not complete data, wait for more");
 			ret = 0;
 			break;
 		}
@@ -112,14 +110,13 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 		csnet_msg_append(msg, (char*)&methods, 1);
 		csnet_sendto(Q, msg);
 
-		client_sock->state = SOCKS5_ST_EXHOST;
+		client_sock->stage = SOCKS5_STAGE_EXHOST;
 		ret = 2 + nmethods;
 		break;
 	}
 
-	case SOCKS5_ST_EXHOST: {
+	case SOCKS5_STAGE_EXHOST: {
 		if (csnet_slow(len < SOCKS5_REQ_HEAD_SIZE)) {
-			log_d(LOG, "not comlete data, wait for more");
 			ret = 0;
 			break;
 		}
@@ -142,8 +139,7 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 		}
 
 		if (atyp == SOCKS5_ATYP_IPv4) {
-			if (len < SOCKS5_IPV4_REQ_SIZE) {
-				log_d(LOG, "not comlete data, wait for more");
+			if (csnet_slow(len < SOCKS5_IPV4_REQ_SIZE)) {
 				ret = 0;
 				break;
 			}
@@ -200,8 +196,8 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 
 			free(ciphertext);
 
-			client_sock->state = SOCKS5_ST_STREAMING;
-			remote_sock->state = SOCKS5_ST_EXHOST;
+			client_sock->stage = SOCKS5_STAGE_STREAM;
+			remote_sock->stage = SOCKS5_STAGE_EXHOST;
 
 			ret = SOCKS5_IPV4_REQ_SIZE;
 		} else if (atyp == SOCKS5_ATYP_DONAME) {
@@ -216,8 +212,7 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 
 			exhosttext_len = SOCKS5_REQ_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE;
 
-			if (len < exhosttext_len) {
-				log_d(LOG, "not complete data, wait for more");
+			if (csnet_slow(len < exhosttext_len)) {
 				ret = 0;
 				break;
 			}
@@ -242,7 +237,7 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 			memcpy(remote_sock->host, domain_name, domain_name_len);
 			remote_sock->host[domain_name_len] = '\0';
 
-			log_d(LOG, "exhost: socket %d ---> socket %d (%s)",
+			log_d(LOG, "exhost: socket %d >>> socket %d (%s)",
 				  client_sock->fd, remote_sock->fd, domain_name);
 
 			remote_sock->sock = client_sock;
@@ -258,7 +253,7 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 								   exhosttext_len + RANDOM_SIZE,
 								   passwd);
 			if (ciphertext_len < 0) {
-				log_e(LOG, "encrypt error. socket %d ---> socket %d (%s)",
+				log_e(LOG, "encrypt error. socket %d >>> socket %d (%s)",
 					  client_sock->fd, remote_sock->fd, domain_name);
 				ret = -1;
 				break;
@@ -271,8 +266,8 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 
 			free(ciphertext);
 
-			remote_sock->state = SOCKS5_ST_EXHOST;
-			client_sock->state = SOCKS5_ST_STREAMING;
+			remote_sock->stage = SOCKS5_STAGE_EXHOST;
+			client_sock->stage = SOCKS5_STAGE_STREAM;
 			ret = exhosttext_len;
 		} else if (atyp == SOCKS5_ATYP_IPv6) {
 			log_d(LOG, "address type is IPv6, not support yet");
@@ -284,14 +279,14 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 		break;
 	}
 
-	case SOCKS5_ST_STREAMING: {
+	case SOCKS5_STAGE_STREAM: {
 		struct csnet_socket* remote_sock = client_sock->sock;
 		struct csnet_msg* msg;
 		msg = csnet_msg_new(len, remote_sock);
 		csnet_msg_append(msg, data, len);
 		csnet_sendto(Q, msg);
 
-		log_d(LOG, "streaming: socket %d ---> socket %d (%s)",
+		log_d(LOG, "stream: socket %d >>> socket %d (%s)",
 			  client_sock->fd, remote_sock->fd, remote_sock->host);
 
 		ret = len;
@@ -299,40 +294,35 @@ client_handler(struct csnet_socket* client_sock, int state, char* data, int len)
 	}
 
 	default:
-		log_w(LOG, "unknown state: %d", state);
+		log_w(LOG, "unknown stage: %d", stage);
 		ret = -1;
 		break;
 	}
-
-	log_d(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
-		  client_sock->fd, len, ret, len - ret);
 
 	return ret;
 }
 
 static int
-remote_handler(struct csnet_socket* remote_sock, int state, char* data, int len) {
+remote_handler(struct csnet_socket* remote_sock, int stage, char* data, int len) {
 	int ret = 0;
 	struct csnet_socket* client_sock = remote_sock->sock;
 
-	switch (state) {
-	case SOCKS5_ST_EXHOST: {
+	switch (stage) {
+	case SOCKS5_STAGE_EXHOST: {
 		int ciphertext_len;
 		int plaintext_len;
 		char* plaintext;
 		char reply[256];
 		struct csnet_msg* msg;
 
-		if (len < 4) {
-			log_d(LOG, "not complete data, wait for more");
+		if (csnet_slow(len < 4)) {
 			ret = 0;
 			break;
 		}
 
 		memcpy((char*)&ciphertext_len, data, 4);
 
-		if (len < 4 + ciphertext_len) {
-			log_d(LOG, "not complete data, wait for more");
+		if (csnet_slow(len < 4 + ciphertext_len)) {
 			ret = 0;
 			break;
 		}
@@ -342,7 +332,7 @@ remote_handler(struct csnet_socket* remote_sock, int state, char* data, int len)
 						      ciphertext_len,
 						      passwd);
 		if (plaintext_len < 0) {
-			log_e(LOG, "decrypt error. exhost: %d <--- socket %d (%s)",
+			log_e(LOG, "decrypt error. exhost: %d <<< socket %d (%s)",
 				  client_sock->fd, remote_sock->fd, remote_sock->host);
 			ret = -1;
 			break;
@@ -365,7 +355,7 @@ remote_handler(struct csnet_socket* remote_sock, int state, char* data, int len)
 			msg = csnet_msg_new(ret, client_sock);
 			csnet_msg_append(msg, reply, ret);
 			csnet_sendto(Q, msg);
-			log_d(LOG, "exhost: socket %d <--- socket %d (%s)",
+			log_d(LOG, "exhost: socket %d <<< socket %d (%s)",
 				  client_sock->fd, remote_sock->fd, remote_sock->host);
 		} else if (typ == SOCKS5_ATYP_IPv6) {
 			ret = -1;
@@ -374,19 +364,19 @@ remote_handler(struct csnet_socket* remote_sock, int state, char* data, int len)
 
 		free(plaintext);
 
-		client_sock->state = SOCKS5_ST_STREAMING;
-		remote_sock->state = SOCKS5_ST_STREAMING;
+		client_sock->stage = SOCKS5_STAGE_STREAM;
+		remote_sock->stage = SOCKS5_STAGE_STREAM;
 		ret = 4 + ciphertext_len;
  		break;
 	}
 
-	case SOCKS5_ST_STREAMING: {
+	case SOCKS5_STAGE_STREAM: {
 		struct csnet_msg* msg;
 		msg = csnet_msg_new(len, client_sock);
 		csnet_msg_append(msg, data, len);
 		csnet_sendto(Q, msg);
 
-		log_d(LOG, "streaming: socket %d <--- socket %d (%s)",
+		log_d(LOG, "stream: socket %d <<< socket %d (%s)",
 			  client_sock->fd, remote_sock->fd, remote_sock->host);
 		ret = len;
 		break;
@@ -396,9 +386,6 @@ remote_handler(struct csnet_socket* remote_sock, int state, char* data, int len)
 		ret = -1;
 		break;
 	}
-
-	log_d(LOG, "socket %d, recv %d bytes, handle %d bytes, remains %d bytes",
-		  remote_sock->fd, len, ret, len - ret);
 
 	return ret;
 }

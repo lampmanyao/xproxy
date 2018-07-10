@@ -130,8 +130,8 @@ readable_event(struct csnet_el* el, struct csnet_socket* socket) {
 	if (csnet_fast(r > 0)) {
 		char* data = csnet_rb_data(socket->rb);
 		unsigned int len = csnet_rb_len(socket->rb);
-		int state = socket->state;
-		int rt = csnet_module_entry(el->module, socket, state, data, len);
+		int stage = socket->stage;
+		int rt = csnet_module_entry(el->module, socket, stage, data, len);
 
 		if (rt != -1) {
 			csnet_rb_seek(socket->rb, rt);

@@ -8,7 +8,7 @@ struct csnet_rb;
 struct csnet_socket {
 	int fd;
 	unsigned int sid;
-	int state;
+	int stage;
 	int type;
 	struct csnet_rb* rb;
 	struct csnet_socket* sock;

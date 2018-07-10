@@ -68,7 +68,6 @@ csnet_sockset_put(struct csnet_sockset* set, int fd) {
 	}
 	socket->sid = sid;
 	socket->fd = fd;
-	socket->state = SOCKS5_ST_EXMETHOD;
 	return sid;
 }
 

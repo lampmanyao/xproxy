@@ -16,7 +16,6 @@ csnet_module_new(void) {
 	if (!m) {
 		csnet_oom(sizeof(*m));
 	}
-	m->ref_count = 0;
 	return m;
 }
 
@@ -27,11 +26,6 @@ csnet_module_init(struct csnet_module* m, void* conntor, struct cs_lfqueue* q,
 	m->q = q;
 	m->log = log;
 	m->config = config;
-}
-
-void
-csnet_module_term(struct csnet_module* m) {
-	m->business_term();
 }
 
 void
@@ -51,29 +45,12 @@ csnet_module_load(struct csnet_module* m, const char* module) {
 		log_f(m->log, "%s", dlerror());
 	}
 
-	m->business_term = dlsym(m->module, "business_term");
-	if (!m->business_term) {
-		log_f(m->log, "%s", dlerror());
-	}
-
-	csnet_file_md5(module, m->md5);
-	m->md5[16] = '\0';
 	m->business_init(m->conntor, m->q, m->log, m->config);
 }
 
-void
-csnet_module_ref_increment(struct csnet_module* m) {
-	INC_ONE_ATOMIC(&m->ref_count);
-}
-
-void
-csnet_module_ref_decrement(struct csnet_module* m) {
-	DEC_ONE_ATOMIC(&m->ref_count);
-}
-
 int
-csnet_module_entry(struct csnet_module* m, struct csnet_socket* socket, int state, char* data, int len) {
-	return m->business_entry(socket, state, data, len);
+csnet_module_entry(struct csnet_module* m, struct csnet_socket* socket, int stage, char* data, int len) {
+	return m->business_entry(socket, stage, data, len);
 }
 
 void

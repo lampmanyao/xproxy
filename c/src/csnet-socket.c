@@ -25,7 +25,7 @@ csnet_socket_new(int rsize, int type) {
 	}
 	socket->fd = 0;
 	socket->sid = 0;
-	socket->state = SOCKS5_ST_START;
+	socket->stage = SOCKS5_STAGE_EXMETHOD;
 	socket->type = type;
 	socket->rb = csnet_rb_new(rsize);
 	socket->sock = NULL;
@@ -51,7 +51,6 @@ csnet_socket_recv(struct csnet_socket* socket) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			return 0;
 		}
-		debug("recv() error from socket %d: %s", socket->fd, strerror(errno));
 		return -1; /* error */
 	}
 
@@ -68,7 +67,6 @@ csnet_socket_send(struct csnet_socket* socket, char* buff, int len) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				continue;
 			}
-			debug("send() error to socket %d: %s", socket->fd, strerror(errno));
 			return -1;
 		}
 		remain -= s;
@@ -80,7 +78,7 @@ void
 csnet_socket_reset(struct csnet_socket* socket) {
 	close(socket->fd);
 	socket->sid = 0;
-	socket->state = SOCKS5_ST_START;
+	socket->stage = SOCKS5_STAGE_EXMETHOD;
 	csnet_rb_reset(socket->rb);
 }
 
