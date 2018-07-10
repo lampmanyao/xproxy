@@ -15,15 +15,15 @@ struct csnet_module;
 struct csnet {
 	pthread_t tid;
 	int listenfd;
-	int thread_count;
+	int nthread;
 	int max_conn;
 	struct csnet_epoller* epoller;
 	struct cs_lfqueue* q;
 	struct csnet_log* log;
-	struct csnet_el* el_list[0];
+	struct csnet_el* els[0];
 };
 
-struct csnet* csnet_new(int port, int thread_count, int max_conn,
+struct csnet* csnet_new(int port, int nthread, int max_conn,
                         struct csnet_log* log, struct csnet_module* module,
                         struct cs_lfqueue* q);
 

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "csnet-business-ops.h"
 #include "cs-lfqueue.h"
 #include "csnet-atomic.h"
 #include "csnet-cond.h"
@@ -14,7 +13,6 @@
 #endif
 #include "csnet-fast.h"
 #include "csnet.h"
-#include "csnet-hotpatch.h"
 #include "csnet-log.h"
 #include "csnet-module.h"
 #include "csnet-msg.h"

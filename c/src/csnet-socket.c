@@ -25,7 +25,7 @@ csnet_socket_new(int rsize, int type) {
 	}
 	socket->fd = 0;
 	socket->sid = 0;
-	socket->state = SOCKS5_ST_START;
+	socket->stage = SOCKS5_STAGE_EXMETHOD;
 	socket->type = type;
 	socket->rb = csnet_rb_new(rsize);
 	socket->sock = NULL;
@@ -41,20 +41,16 @@ csnet_socket_free(struct csnet_socket* socket) {
 int
 csnet_socket_recv(struct csnet_socket* socket) {
 	char recvbuf[READ_BUFFER_SIZE] = {0};
-	int nrecv;
-
-tryagain:
-	nrecv = recv(socket->fd, recvbuf, READ_BUFFER_SIZE, 0);
-	if (csnet_fast(nrecv > 0)) {
-		csnet_rb_append(socket->rb, recvbuf, nrecv);
-		return nrecv;
+	int r = recv(socket->fd, recvbuf, READ_BUFFER_SIZE, 0);
+	if (csnet_fast(r > 0)) {
+		csnet_rb_append(socket->rb, recvbuf, r);
+		return r;
 	}
 
-	if (nrecv < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-			goto tryagain;
+	if (r < 0) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			return 0;
 		}
-		debug("recv() error from socket[%d]: %s", socket->fd, strerror(errno));
 		return -1; /* error */
 	}
 
@@ -63,18 +59,17 @@ tryagain:
 
 int
 csnet_socket_send(struct csnet_socket* socket, char* buff, int len) {
-	int nsend = 0;
+	int s = 0;
 	int remain = len;
 	while (remain > 0) {
-		nsend = send(socket->fd, buff + len - remain, remain, 0);
-		if (csnet_slow(nsend < 0)) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+		s = send(socket->fd, buff + len - remain, remain, 0);
+		if (csnet_slow(s < 0)) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				continue;
 			}
-			debug("send() error to socket[%d]: %s", socket->fd, strerror(errno));
 			return -1;
 		}
-		remain -= nsend;
+		remain -= s;
 	}
 	return len;
 }
@@ -83,7 +78,7 @@ void
 csnet_socket_reset(struct csnet_socket* socket) {
 	close(socket->fd);
 	socket->sid = 0;
-	socket->state = SOCKS5_ST_START;
+	socket->stage = SOCKS5_STAGE_EXMETHOD;
 	csnet_rb_reset(socket->rb);
 }
 

@@ -42,7 +42,6 @@ int main(int argc, char** argv)
 	struct csnet_config* config;
 	struct csnet_module* module;
 	struct csnet_conntor* conntor;
-	struct csnet_hotpatch* hotpatch;
 
 	config = csnet_config_new();
 	csnet_config_load(config, conf_file);
@@ -95,19 +94,19 @@ int main(int argc, char** argv)
 	business_module = csnet_config_find(config, "business-module", strlen("business-module"));
 
 	if (!myport) {
-		log_fatal(logger, "could not find `myport`!");
+		log_f(logger, "could not find `myport`!");
 	}
 
 	if (!maxconn) {
-		log_fatal(logger, "could not find `maxconn`!");
+		log_f(logger, "could not find `maxconn`!");
 	}
 
 	if (!threadcount) {
-		log_fatal(logger, "could not find `threadcount`!");
+		log_f(logger, "could not find `threadcount`!");
 	}
 
 	if (!business_module) {
-		log_fatal(logger, "could not find `business_module`!");
+		log_f(logger, "could not find `business_module`!");
 	}
 
 	q = cs_lfqueue_new();
@@ -116,9 +115,8 @@ int main(int argc, char** argv)
 	csnet_module_init(module, conntor, q, logger, config);
 	csnet_module_load(module, business_module);
 	csnet = csnet_new(atoi(myport), atoi(threadcount), atoi(maxconn), logger, module, q);
-	hotpatch = csnet_hotpatch_new(module, q, csnet, NULL, logger, config);
 
-	log_info(logger, "Server start ok ...");
+	log_i(logger, "Server start ok ...");
 
 	csnet_conntor_loop(conntor);
 	csnet_loop(csnet, 1000);
@@ -128,7 +126,6 @@ int main(int argc, char** argv)
 	csnet_config_free(config);
 	csnet_module_free(module);
 	csnet_conntor_free(conntor);
-	csnet_hotpatch_free(hotpatch);
 	csnet_log_free(logger);
 
         return 0;

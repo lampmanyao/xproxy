@@ -25,6 +25,6 @@ struct csnet_el {
 
 struct csnet_el* csnet_el_new(int max_conn, struct csnet_log* log, struct csnet_module* module, struct cs_lfqueue* q);
 void csnet_el_free(struct csnet_el*);
-int csnet_el_add_connection(struct csnet_el*, int fd);
-void csnet_el_run_io_thread(struct csnet_el*);
+int csnet_el_watch(struct csnet_el*, int fd);
+void csnet_el_run(struct csnet_el*);
 

@@ -54,10 +54,10 @@ csnet_el_new(int max_conn, struct csnet_log* log,
 }
 
 int
-csnet_el_add_connection(struct csnet_el* el, int fd) {
+csnet_el_watch(struct csnet_el* el, int fd) {
 	unsigned int sid;
 	if (csnet_slow(el->cur_conn++ > el->max_conn)) {
-		log_warn(el->log, "Too much connections, closing socket %d", fd);
+		log_w(el->log, "Too much connections, closing socket %d", fd);
 		return -1;
 	}
 
@@ -82,15 +82,15 @@ csnet_el_io_thread(void* arg) {
 			sid = csnet_epoller_event_sid(ee);
 			socket = csnet_sockset_get_socket(el->sockset, sid);
 
-			if (csnet_fast(csnet_epoller_event_is_readable(ee))) {
+			if (csnet_fast(csnet_epoller_event_is_r(ee))) {
 				readable_event(el, socket);
-			} else if (csnet_epoller_event_is_error(ee)) {
+			} else if (csnet_epoller_event_is_e(ee)) {
 				/*
 				 * EPOLLERR and EPOLLHUP events can occur if the remote peer
 				 * was colsed or a terminal hangup occured. We do nothing
 				 * here but LOGGING.
 				 */
-				log_warn(el->log, "EPOLLERR on socket: %d", socket->fd);
+				log_w(el->log, "EPOLLERR on socket: %d", socket->fd);
 			}
 		}
 
@@ -99,7 +99,7 @@ csnet_el_io_thread(void* arg) {
 				/* Stopped by a signal */
 				continue;
 			} else {
-				log_error(el->log, "epoll_wait(): %s", strerror(errno));
+				log_e(el->log, "epoll_wait(): %s", strerror(errno));
 				return NULL;
 			}
 		}
@@ -111,9 +111,9 @@ csnet_el_io_thread(void* arg) {
 }
 
 void
-csnet_el_run_io_thread(struct csnet_el* el) {
+csnet_el_run(struct csnet_el* el) {
 	if (pthread_create(&el->tid, NULL, csnet_el_io_thread, el) < 0) {
-		log_fatal(el->log, "pthread_create(): %s", strerror(errno));
+		log_f(el->log, "pthread_create(): %s", strerror(errno));
 	}
 }
 
@@ -126,25 +126,27 @@ csnet_el_free(struct csnet_el* el) {
 
 static void
 readable_event(struct csnet_el* el, struct csnet_socket* socket) {
-	int nrecv = csnet_socket_recv(socket);
-	if (csnet_fast(nrecv > 0)) {
+	int r = csnet_socket_recv(socket);
+	if (csnet_fast(r > 0)) {
 		char* data = csnet_rb_data(socket->rb);
-		unsigned int data_len = csnet_rb_data_len(socket->rb);
-		int state = socket->state;
-		int rt = csnet_module_entry(el->module, socket, state, data, data_len);
+		unsigned int len = csnet_rb_len(socket->rb);
+		int stage = socket->stage;
+		int rt = csnet_module_entry(el->module, socket, stage, data, len);
 
 		if (rt != -1) {
 			csnet_rb_seek(socket->rb, rt);
-			csnet_epoller_mod_rw(el->epoller, socket->fd, socket->sid);
 		} else {
+			log_e(el->log, "module return error, closing socket %d (%s)",
+				  socket->fd, socket->host);
 			csnet_epoller_del(el->epoller, socket->fd, socket->sid);
 			csnet_sockset_reset_socket(el->sockset, socket->sid);
-			log_error(el->log, "module return error, closing socket %d (%s)",
-				  socket->fd, socket->host);
 			el->cur_conn--;
 		}
+	} else if (r == 0) {
+		log_i(el->log, "client socket %d receive buffer is full, wait for next time", socket->fd);
+		csnet_epoller_r(el->epoller, socket->fd, socket->sid);
 	} else {
-		log_warn(el->log, "client peer close, closing socket %d (%s)",
+		log_w(el->log, "client peer close, closing socket %d (%s)",
 			 socket->fd, socket->host);
 		csnet_epoller_del(el->epoller, socket->fd, socket->sid);
 		csnet_sockset_reset_socket(el->sockset, socket->sid);

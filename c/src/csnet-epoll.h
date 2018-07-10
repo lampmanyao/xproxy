@@ -72,7 +72,7 @@ csnet_epoller_del(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 }
 
 static int
-csnet_epoller_mod_read(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_epoller_r(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 	struct epoll_event ev = {
 		.events = EPOLLIN | EPOLLET,
 		.data.u64 = (unsigned long)fd << 32 | sid
@@ -81,7 +81,7 @@ csnet_epoller_mod_read(struct csnet_epoller* epoller, int fd, unsigned int sid) 
 }
 
 static int
-csnet_epoller_mod_write(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_epoller_w(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 	struct epoll_event ev = {
 		.events = EPOLLOUT | EPOLLET,
 		.data.u64 = (unsigned long)fd << 32 | sid
@@ -90,7 +90,7 @@ csnet_epoller_mod_write(struct csnet_epoller* epoller, int fd, unsigned int sid)
 }
 
 static int
-csnet_epoller_mod_rw(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_epoller_rw(struct csnet_epoller* epoller, int fd, unsigned int sid) {
 	struct epoll_event ev = {
 		.events = EPOLLIN | EPOLLOUT | EPOLLET,
 		.data.u64 = (unsigned long)fd << 32 | sid
@@ -112,17 +112,17 @@ csnet_epoller_get_event(struct csnet_epoller* epoller, int index) {
 }
 
 static bool
-csnet_epoller_event_is_readable(csnet_epoller_event_t* event) {
+csnet_epoller_event_is_r(csnet_epoller_event_t* event) {
 	return event->events & EPOLLIN;
 }
 
 static bool
-csnet_epoller_event_is_writeable(csnet_epoller_event_t* event) {
+csnet_epoller_event_is_w(csnet_epoller_event_t* event) {
 	return event->events & EPOLLOUT;
 }
 
 static bool
-csnet_epoller_event_is_error(csnet_epoller_event_t* event) {
+csnet_epoller_event_is_e(csnet_epoller_event_t* event) {
 	return event->events & (EPOLLERR | EPOLLHUP);
 }
 

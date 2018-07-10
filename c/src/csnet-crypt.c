@@ -75,8 +75,8 @@ csnet_crypt_set_iv(const char* password) {
 }
 
 int
-csnet_128cfb_encrypt(char** cipherdata,
-		     char* plaindata, unsigned int length, const char* key) {
+csnet_128cfb_encrypt(char** ciphertext,
+		     char* plaintext, unsigned int length, const char* key) {
 	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
 
 	if (EVP_EncryptInit_ex(ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
@@ -85,29 +85,29 @@ csnet_128cfb_encrypt(char** cipherdata,
 	}
 
 	int len = 0;
-	int cipherdata_len = 0;
-	*cipherdata = malloc(length + EVP_MAX_BLOCK_LENGTH);
+	int ciphertext_len = 0;
+	*ciphertext = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_EncryptUpdate(ctx, (unsigned char*)*cipherdata, &len,
-			      (unsigned char*)plaindata, length) != 1) {
+	if (EVP_EncryptUpdate(ctx, (unsigned char*)*ciphertext, &len,
+			      (unsigned char*)plaintext, length) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
-		free(*cipherdata);
+		free(*ciphertext);
 		return -1;
 	}
-	cipherdata_len = len;
-	if (EVP_EncryptFinal_ex(ctx, (unsigned char*)(*cipherdata) + len, &len) != 1) {
+	ciphertext_len = len;
+	if (EVP_EncryptFinal_ex(ctx, (unsigned char*)(*ciphertext) + len, &len) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
-		free(*cipherdata);
+		free(*ciphertext);
 		return -1;
 	}
-	cipherdata_len += len;
+	ciphertext_len += len;
 	EVP_CIPHER_CTX_free(ctx);
-	return cipherdata_len;
+	return ciphertext_len;
 }
 
 int
-csnet_128cfb_decrypt(char** plaindata,
-		     char* cipherdata, unsigned int length, const char* key) {
+csnet_128cfb_decrypt(char** plaintext,
+		     char* ciphertext, unsigned int length, const char* key) {
 	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
 
 	if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cfb(), NULL, (const unsigned char*)key, IV) != 1) {
@@ -116,28 +116,28 @@ csnet_128cfb_decrypt(char** plaindata,
 	}
 
 	int len = 0;
-	int plaindata_len = 0;
-	*plaindata = malloc(length + EVP_MAX_BLOCK_LENGTH);
+	int plaintext_len = 0;
+	*plaintext = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_DecryptUpdate(ctx, (unsigned char*)*plaindata, &len,
-			      (unsigned char*)cipherdata, length) != 1) {
+	if (EVP_DecryptUpdate(ctx, (unsigned char*)*plaintext, &len,
+			      (unsigned char*)ciphertext, length) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
-		free(*plaindata);
+		free(*plaintext);
 		return -1;
 	}
-	plaindata_len = len;
-	if (EVP_DecryptFinal_ex(ctx, (unsigned char*)(*plaindata) + len, &len) != 1) {
+	plaintext_len = len;
+	if (EVP_DecryptFinal_ex(ctx, (unsigned char*)(*plaintext) + len, &len) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
-		free(*plaindata);
+		free(*plaintext);
 		return -1;
 	}
-	plaindata_len += len;
+	plaintext_len += len;
 	EVP_CIPHER_CTX_free(ctx);
-	return plaindata_len;
+	return plaintext_len;
 }
 
 
-#if defined TEST
+#if defined CRYPt_MAIN_TEST
 
 // compile:
 // macos: gcc -DTEST -o a.out csnet-crypt.c -I/usr/local/Cellar/openssl/1.0.1j/include -L/usr/local/Cellar/openssl/1.0.1j/lib -lssl -lcrypto
@@ -147,22 +147,23 @@ int main()
 {
 	csnet_crypt_setup();
 	char* key = "helloworld";
-	char* plaindata = "ASDASDSADASDASDASD";
-	int length = strlen(plaindata);
-	printf("plain data length = %d\n", length);
-	char* cipherdata;
-	int cipherdata_len = csnet_128cfb_encrypt(&cipherdata, plaindata, length, key);
-	printf("encrypted data length = %d\n", cipherdata_len);
+	csnet_crypt_set_iv(key);
+	char* plaintext = "ASDASDSADASDASDASD";
+	int length = strlen(plaintext);
+	printf("plaintext length = %d\n", length);
+	char* ciphertext;
+	int ciphertext_len = csnet_128cfb_encrypt(&ciphertext, plaintext, length, key);
+	printf("encrypted text length = %d\n", ciphertext_len);
 
-	char* rawdata;
-	int rawdata_len = csnet_128cfb_decrypt(&rawdata, cipherdata, cipherdata_len, key);
+	char* rawtext;
+	int rawtext_len = csnet_128cfb_decrypt(&rawtext, ciphertext, ciphertext_len, key);
 
-	printf("decrypted data length = %d\n", rawdata_len);
-	printf("before encrypted: %s\n", plaindata);
-	printf("atfer decrypted: %s\n", rawdata);
+	printf("decrypted text length = %d\n", rawtext_len);
+	printf("before encrypted: %s\n", plaintext);
+	printf("atfer decrypted: %s\n", rawtext);
 
-	free(cipherdata);
-	free(rawdata);
+	free(ciphertext);
+	free(rawtext);
 	csnet_crypt_cleanup();
 
 	return 0;

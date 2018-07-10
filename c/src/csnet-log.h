@@ -28,8 +28,8 @@
 	struct tm tm; \
 	gettimeofday(&tv, NULL); \
 	localtime_r(&tv.tv_sec, &tm); \
-	snprintf(time_buff, 32, "%04d-%02d-%02d %02d:%02d:%02d,%06d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)tv.tv_usec); \
-	fprintf(stderr, "%s %s:%u %ld debug " fmt "\n", time_buff, __FILE__, __LINE__, (long)csnet_threadid(), ##args); \
+	snprintf(time_buff, 32, "%04d-%02d-%02d %02d:%02d:%02d.%06d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)tv.tv_usec); \
+	fprintf(stderr, "%s %s:%u %5ld debug " fmt "\n", time_buff, __FILE__, __LINE__, (long)csnet_threadid(), ##args); \
 	fflush(stderr); \
 } while (0)
 
@@ -39,40 +39,40 @@
 	struct tm tm; \
 	gettimeofday(&tv, NULL); \
 	localtime_r(&tv.tv_sec, &tm); \
-	snprintf(time_buff, 32, "%04d-%02d-%02d %02d:%02d:%02d,%06d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)tv.tv_usec); \
-	fprintf(stderr, "%s %s:%u %ld fatal " fmt "\n", time_buff, __FILE__, __LINE__, (long)csnet_threadid(), ##args); \
+	snprintf(time_buff, 32, "%04d-%02d-%02d %02d:%02d:%02d.%06d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)tv.tv_usec); \
+	fprintf(stderr, "%s %s:%u %5ld fatal " fmt "\n", time_buff, __FILE__, __LINE__, (long)csnet_threadid(), ##args); \
 	fflush(stderr); \
 	exit(-1); \
 } while (0)
 
-#define log_debug(log, fmt, args ...) do { \
+#define log_d(log, fmt, args ...) do { \
 	char time_buff[32]; \
 	_format_time(log, time_buff); \
-        csnet_log_log(log, LL_DEBUG, "%s %ld debug %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
+        csnet_log_log(log, LL_DEBUG, "%s %5ld debug %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
 } while (0)
 
-#define log_info(log, fmt, args ...) do { \
+#define log_i(log, fmt, args ...) do { \
 	char time_buff[32]; \
 	_format_time(log, time_buff); \
-        csnet_log_log(log, LL_INFO, "%s %ld info %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
+        csnet_log_log(log, LL_INFO, "%s %5ld  info %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
 } while (0)
 
-#define log_warn(log, fmt, args ...) do { \
+#define log_w(log, fmt, args ...) do { \
 	char time_buff[32]; \
 	_format_time(log, time_buff); \
-        csnet_log_log(log, LL_WARNING, "%s %ld warn %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
+        csnet_log_log(log, LL_WARNING, "%s %5ld  warn %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
 } while (0)
 
-#define log_error(log, fmt, args ...) do { \
+#define log_e(log, fmt, args ...) do { \
 	char time_buff[32]; \
 	_format_time(log, time_buff); \
-        csnet_log_log(log, LL_ERROR, "%s %ld error %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
+        csnet_log_log(log, LL_ERROR, "%s %5ld error %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
 } while (0)
 
-#define log_fatal(log, fmt, args ...) do { \
+#define log_f(log, fmt, args ...) do { \
 	char time_buff[32]; \
 	_format_time(log, time_buff); \
-	csnet_log_fatal(log, "%s %ld fatal %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
+	csnet_log_fatal(log, "%s %5ld fatal %s:%d " fmt "\n", time_buff, (long)csnet_threadid(), __FILE__, __LINE__, ##args); \
 } while (0)
 
 struct csnet_log;
