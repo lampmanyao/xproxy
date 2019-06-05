@@ -13,7 +13,7 @@
 #define MAX_BUFFER_LEN 1024 * 1024 * 10  /* 5M */
 
 static inline char*
-_expand(int size) {
+_expand(size_t size) {
 	if (size > MAX_BUFFER_LEN) {
 		return NULL;
 	}
@@ -21,13 +21,8 @@ _expand(int size) {
 	return calloc(1, size);
 }
 
-struct csnet_rb*
-csnet_rb_new(unsigned int size) {
-	struct csnet_rb* rb = calloc(1, sizeof(*rb));
-	if (!rb) {
-		csnet_oom(sizeof(*rb));
-	}
-
+void
+csnet_rb_init(struct csnet_rb* rb, size_t size) {
 	rb->capacity = size;
 	rb->len = 0;
 	rb->seek = 0;
@@ -36,59 +31,27 @@ csnet_rb_new(unsigned int size) {
 	if (!rb->buffer) {
 		csnet_oom(size);
 	}
-
-	return rb;
 }
 
 void
-csnet_rb_free(struct csnet_rb* rb) {
+csnet_rb_destroy(struct csnet_rb* rb) {
 	free(rb->buffer);
-	free(rb);
 }
 
-int
-csnet_rb_append(struct csnet_rb* rb, const char* data, unsigned int len) {
-	unsigned int remain = rb->capacity - rb->len;
-
-	if (remain < len) {
-		/* insufficient space, make a new memory */
-		rb->capacity += len;
-		char* new_buffer = _expand(rb->capacity);
-		if (csnet_slow(!new_buffer)) {
-			csnet_oom(rb->capacity + len);
-		}
-
-		if (rb->len == 0) {
-			memcpy(new_buffer, data, len);
-		} else {
-			memcpy(new_buffer, rb->buffer, rb->len);
-			memcpy(new_buffer + rb->len, data, len);
-		}
-
-		free(rb->buffer);
-		rb->buffer = new_buffer;
-		rb->len += len;
-	} else {
-		memcpy(rb->buffer + rb->len, data, len);
-		rb->len += len;
-	}
-
-	return 0;
-}
-
-unsigned int
-csnet_rb_seek(struct csnet_rb* rb, unsigned int len) {
+void
+csnet_rb_seek(struct csnet_rb* rb, size_t len) {
 	if (csnet_slow(len > rb->len)) {
 		fatal("len > rb->len");
 	}
 
-	if (len == rb->len) {
+	size_t need_to_move = rb->len - len;
+
+	if (need_to_move) {
 		rb->len = 0;
 	} else {
+		memmove(rb->buffer, rb->buffer + len, need_to_move);
 		rb->len -= len;
-		memmove(rb->buffer, rb->buffer + len, rb->len);
 	}
-	return 0;
 }
 
 inline char*
@@ -96,7 +59,7 @@ csnet_rb_data(struct csnet_rb* rb) {
 	return rb->buffer;
 }
 
-inline unsigned int
+inline size_t
 csnet_rb_len(struct csnet_rb* rb) {
 	return rb->len;
 }
@@ -104,5 +67,6 @@ csnet_rb_len(struct csnet_rb* rb) {
 void
 csnet_rb_reset(struct csnet_rb* rb) {
 	rb->len = 0;
+	rb->seek = 0;
 }
 

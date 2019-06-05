@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <math.h>
 #include <errno.h>
@@ -17,157 +18,107 @@
 #include <sys/time.h>
 
 typedef struct kevent64_s csnet_epoller_event_t;
+typedef int csnet_ep_t;
 
-struct csnet_epoller {
-	int fd;
-	int max_events;
-	csnet_epoller_event_t* events;
+struct csnet_event {
+	bool read;
+	bool write;
+	bool eof;
+	bool error;
+	void* ptr;
 };
 
-static struct csnet_epoller*
-csnet_epoller_new(int max_events) {
-	struct csnet_epoller* epoller = calloc(1, sizeof(*epoller));
-	if (!epoller) {
-		csnet_oom(sizeof(*epoller));
+static int
+csnet_ep_open() {
+	int fd = kqueue();
+	if (fd == -1) {
+		debug("kqueue() error: %s", strerror(errno));
+		return -1;
 	}
 
-	epoller->fd = kqueue();
-	if (epoller->fd == -1) {
-		debug("epoll_create(): %s", strerror(errno));
-		free(epoller);
-		return NULL;
-	}
-
-	epoller->max_events = max_events;
-	epoller->events = calloc(max_events, sizeof(csnet_epoller_event_t));
-
-	if (!epoller->events) {
-		csnet_oom(max_events * sizeof(csnet_epoller_event_t));
-	}
-
-	return epoller;
+	return fd;
 }
 
 static void
-csnet_epoller_free(struct csnet_epoller* epoller) {
-	close(epoller->fd);
-	free(epoller->events);
-	free(epoller);
+csnet_ep_close(csnet_ep_t ep) {
+	close(ep);
 }
 
 static int
-csnet_epoller_add(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_add(csnet_ep_t ep, int fd, void* ud) {
 	struct kevent64_s ke;
 
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_READ, EV_ADD, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
+	EV_SET64(&ke, fd, EVFILT_READ, EV_ADD, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0, NULL);
 
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_WRITE, EV_ADD, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
-
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_WRITE, EV_DISABLE, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
-
+	EV_SET64(&ke, fd, EVFILT_WRITE, EV_ADD | EV_DISABLE, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0, NULL);
 	return 0;
 }
 
 static int
-csnet_epoller_del(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_del(csnet_ep_t ep, int fd, void* ud) {
 	struct kevent64_s ke;
-
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_READ, EV_DELETE, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
-
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_WRITE, EV_DELETE, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
-
+	EV_SET64(&ke, fd, EVFILT_READ, EV_DELETE, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0, NULL);
+	EV_SET64(&ke, fd, EVFILT_WRITE, EV_DELETE, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0, NULL);
 	return 0;
 }
 
 static int
-csnet_epoller_r(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_r(csnet_ep_t ep, int fd, void* ud) {
 	struct kevent64_s ke;
-
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_READ, EV_ENABLE, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
-
+	EV_SET64(&ke, fd, EVFILT_READ, EV_ENABLE, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0, NULL);
 	return 0;
 }
 
 static int
-csnet_epoller_w(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_w(csnet_ep_t ep, int fd, void* ud) {
 	struct kevent64_s ke;
-
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_WRITE, EV_ENABLE, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
-
+	EV_SET64(&ke, fd, EVFILT_WRITE, EV_ENABLE, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0, NULL);
 	return 0;
 }
 
 static int
-csnet_epoller_rw(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_rw(csnet_ep_t ep, int fd, void* ud) {
 	struct kevent64_s ke;
+	EV_SET64(&ke, fd, EVFILT_READ, EV_ENABLE, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0,  NULL);
 
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_READ, EV_ENABLE, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0,  NULL);
-	
-	memset(&ke, 0, sizeof(ke));
-	EV_SET64(&ke, fd, EVFILT_WRITE, EV_ENABLE, 0, 0, sid, 0, 0);
-	kevent64(epoller->fd, &ke, 1, NULL, 0, 0, NULL);
-
+	EV_SET64(&ke, fd, EVFILT_WRITE, EV_ENABLE, 0, 0, (intptr_t)ud, 0, 0);
+	kevent64(ep, &ke, 1, NULL, 0, 0, NULL);
 	return 0;
 }
 
 static int
-csnet_epoller_wait(struct csnet_epoller* epoller, int milliseconds) {
+csnet_ep_wait(csnet_ep_t ep,  struct csnet_event* ev, int max, int milliseconds) {
+	struct kevent64_s ke[max];
+	int r;
+
 	if (milliseconds <= 0) {
-		return kevent64(epoller->fd, NULL, 0, epoller->events,
-				epoller->max_events, 0, NULL);
+		r = kevent64(ep, NULL, 0, ke, max, 0, NULL);
 	} else {
-		struct timespec ts;
-		ts.tv_sec = milliseconds / 1000;
-		ts.tv_nsec = (milliseconds % 1000) * 1000000;
-		return kevent64(epoller->fd, NULL, 0, epoller->events,
-				epoller->max_events, 0, (const struct timespec*)&ts);
+		struct timespec tspec = {
+			.tv_sec = milliseconds / 1000,
+			.tv_nsec = (milliseconds % 1000) * 1000000
+		};
+		r = kevent64(ep, NULL, 0, ke, max, 0, &tspec);
 	}
-}
 
-static csnet_epoller_event_t*
-csnet_epoller_get_event(struct csnet_epoller* epoller, int index) {
-	return &epoller->events[index];
-}
+	for (int i = 0; i < r; i++) {
+		ev[i].ptr = (void*)ke[i].udata;
+		int16_t filter = ke[i].filter;
+		bool eof = (ke[i].flags & EV_EOF) != 0;
+		ev[i].read = (filter == EVFILT_READ);
+		ev[i].write = (filter == EVFILT_WRITE) && (!eof);
+		ev[i].error = (ke[i].flags & EV_ERROR) != 0;
+		ev[i].eof = eof;
+	}
 
-static bool
-csnet_epoller_event_is_r(csnet_epoller_event_t* event) {
-	return event->filter == EVFILT_READ;
-}
-
-static bool
-csnet_epoller_event_is_w(csnet_epoller_event_t* event) {
-	return event->filter == EVFILT_WRITE;
-}
-
-static bool
-csnet_epoller_event_is_e(csnet_epoller_event_t* event) {
-	return (event->flags & EV_ERROR) || (event->flags & EV_EOF);
-}
-
-static int
-csnet_epoller_event_fd(csnet_epoller_event_t* event) {
-	return event->ident;
-}
-
-static unsigned int
-csnet_epoller_event_sid(csnet_epoller_event_t* event) {
-	return event->udata;
+	return r;
 }
 
 #endif

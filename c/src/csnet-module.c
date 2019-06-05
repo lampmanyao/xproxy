@@ -2,7 +2,6 @@
 #include "csnet-atomic.h"
 #include "csnet-utils.h"
 #include "csnet-config.h"
-#include "cs-lfqueue.h"
 #include "csnet-socket.h"
 #include "csnet-log.h"
 
@@ -20,10 +19,9 @@ csnet_module_new(void) {
 }
 
 void
-csnet_module_init(struct csnet_module* m, void* conntor, struct cs_lfqueue* q,
+csnet_module_init(struct csnet_module* m, void* conntor,
                   struct csnet_log* log, struct csnet_config* config) {
 	m->conntor = conntor;
-	m->q = q;
 	m->log = log;
 	m->config = config;
 }
@@ -45,7 +43,7 @@ csnet_module_load(struct csnet_module* m, const char* module) {
 		log_f(m->log, "%s", dlerror());
 	}
 
-	m->business_init(m->conntor, m->q, m->log, m->config);
+	m->business_init(m->conntor, m->log, m->config);
 }
 
 int

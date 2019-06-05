@@ -35,14 +35,15 @@ again:
 
 struct csnet_sockset*
 csnet_sockset_new(int max_conn, int type) {
-	struct csnet_sockset* set = calloc(1, sizeof(*set) + max_conn * sizeof(struct csnet_socket*));
+	size_t size = sizeof(struct csnet_sockset) + max_conn * sizeof(struct csnet_socket*);
+	struct csnet_sockset* set = calloc(1, size);
 	if (!set) {
-		csnet_oom(sizeof(*set));
+		csnet_oom(size);
 	}
 
 	set->max_conn = max_conn;
 	for (int i = 0; i < max_conn; i++) {
-		struct csnet_socket* socket = csnet_socket_new(1024, type);
+		struct csnet_socket* socket = csnet_socket_new(65535, type);
 		set->set[i] = socket;
 	}
 
@@ -57,7 +58,7 @@ csnet_sockset_free(struct csnet_sockset* set) {
 	free(set);
 }
 
-unsigned int
+struct csnet_socket*
 csnet_sockset_put(struct csnet_sockset* set, int fd) {
 	int count = set->max_conn;
 	unsigned int sid = SOCKID();
@@ -68,7 +69,7 @@ csnet_sockset_put(struct csnet_sockset* set, int fd) {
 	}
 	socket->sid = sid;
 	socket->fd = fd;
-	return sid;
+	return socket;
 }
 
 struct csnet_socket*

@@ -13,18 +13,15 @@ static int client_handler(struct csnet_socket* client_sock, int stage, char* dat
 static int remote_handler(struct csnet_socket* remote_sock, int stage, char* data, int len);
 
 struct csnet_log* LOG = NULL;
-struct cs_lfqueue* Q = NULL;
 struct csnet_conntor* CONNTOR = NULL;
 char* remote_host;
 int remote_port;
 char* passwd;
 
 int
-business_init(struct csnet_conntor* conntor, struct cs_lfqueue* q,
-	      struct csnet_log* log, struct csnet_config* config) {
+business_init(struct csnet_conntor* conntor, struct csnet_log* log, struct csnet_config* config) {
 	CONNTOR = conntor;
 	LOG = log;
-	Q = q;
 
 	rand();
 
@@ -83,7 +80,7 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 		int8_t nmethods = data[1];
 
 		if (csnet_slow(ver != SOCKS5_VER)) {
-			log_e(LOG, "not socks5, close connection");
+			log_e(LOG, "Not socks5 protocol, close connection");
 			ret = -1;
 			break;
 		}
@@ -105,10 +102,9 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 
 		int8_t methods = data[2];
 
-		struct csnet_msg* msg = csnet_msg_new(2, client_sock);
-		csnet_msg_append(msg, (char*)&ver, 1);
-		csnet_msg_append(msg, (char*)&methods, 1);
-		csnet_sendto(Q, msg);
+		csnet_sb_append(&client_sock->sb, (char *)&ver, 1);
+		csnet_sb_append(&client_sock->sb, (char *)&methods, 1);
+		csnet_socket_send(client_sock);
 
 		client_sock->stage = SOCKS5_STAGE_EXHOST;
 		ret = 2 + nmethods;
@@ -127,7 +123,7 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 		int8_t atyp = data[3];
 
 		if (csnet_slow(ver != SOCKS5_VER)) {
-			log_e(LOG, "not socks5, close connection");
+			log_e(LOG, "Not socks5 protocol, close connection");
 			ret = -1;
 			break;
 		}
@@ -188,11 +184,9 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 				ret = -1;
 			}
 
-			struct csnet_msg* msg = csnet_msg_new(4 + ciphertext_len,
-							      remote_sock);
-			csnet_msg_append(msg, (char*)&ciphertext_len, 4);
-			csnet_msg_append(msg, ciphertext, ciphertext_len);
-			csnet_sendto(Q, msg);
+			csnet_sb_append(&remote_sock->sb, (char*)&ciphertext_len, 4);
+			csnet_sb_append(&remote_sock->sb, ciphertext, ciphertext_len);
+			csnet_socket_send(remote_sock);
 
 			free(ciphertext);
 
@@ -259,10 +253,9 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 				break;
 			}
 
-			struct csnet_msg* msg = csnet_msg_new(4 + ciphertext_len, remote_sock);
-			csnet_msg_append(msg, (char*)&ciphertext_len, 4);
-			csnet_msg_append(msg, ciphertext, ciphertext_len);
-			csnet_sendto(Q, msg);
+			csnet_sb_append(&remote_sock->sb, (char*)&ciphertext_len, 4);
+			csnet_sb_append(&remote_sock->sb, ciphertext, ciphertext_len);
+			csnet_socket_send(remote_sock);
 
 			free(ciphertext);
 
@@ -281,10 +274,13 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 
 	case SOCKS5_STAGE_STREAM: {
 		struct csnet_socket* remote_sock = client_sock->sock;
-		struct csnet_msg* msg;
-		msg = csnet_msg_new(len, remote_sock);
-		csnet_msg_append(msg, data, len);
-		csnet_sendto(Q, msg);
+		if (!remote_sock) {
+			ret = -1;
+			break;
+		}
+
+		csnet_sb_append(&remote_sock->sb, data, len);
+		csnet_socket_send(remote_sock);
 
 		log_d(LOG, "stream: socket %d >>> socket %d (%s)",
 			  client_sock->fd, remote_sock->fd, remote_sock->host);
@@ -313,7 +309,6 @@ remote_handler(struct csnet_socket* remote_sock, int stage, char* data, int len)
 		int plaintext_len;
 		char* plaintext;
 		char reply[256];
-		struct csnet_msg* msg;
 
 		if (csnet_slow(len < 4)) {
 			ret = 0;
@@ -345,16 +340,14 @@ remote_handler(struct csnet_socket* remote_sock, int stage, char* data, int len)
 
 		if (typ == SOCKS5_ATYP_IPv4) {
 			memcpy(reply, plaintext + RANDOM_SIZE, 10);
-			msg = csnet_msg_new(10, client_sock);
-			csnet_msg_append(msg, reply, 10);
-			csnet_sendto(Q, msg);
+			csnet_sb_append(&client_sock->sb, reply, 10);
+			csnet_socket_send(client_sock);
 		} else if (typ == SOCKS5_ATYP_DONAME) {
 			uint8_t domain_name_len = plaintext[SOCKS5_RSP_HEAD_SIZE + RANDOM_SIZE];
 			ret = SOCKS5_RSP_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE;
 			memcpy(reply, plaintext + RANDOM_SIZE, ret);
-			msg = csnet_msg_new(ret, client_sock);
-			csnet_msg_append(msg, reply, ret);
-			csnet_sendto(Q, msg);
+			csnet_sb_append(&client_sock->sb, reply, ret);
+			csnet_socket_send(client_sock);
 			log_d(LOG, "exhost: socket %d <<< socket %d (%s)",
 				  client_sock->fd, remote_sock->fd, remote_sock->host);
 		} else if (typ == SOCKS5_ATYP_IPv6) {
@@ -371,10 +364,8 @@ remote_handler(struct csnet_socket* remote_sock, int stage, char* data, int len)
 	}
 
 	case SOCKS5_STAGE_STREAM: {
-		struct csnet_msg* msg;
-		msg = csnet_msg_new(len, client_sock);
-		csnet_msg_append(msg, data, len);
-		csnet_sendto(Q, msg);
+		csnet_sb_append(&client_sock->sb, data, len);
+		csnet_socket_send(client_sock);
 
 		log_d(LOG, "stream: socket %d <<< socket %d (%s)",
 			  client_sock->fd, remote_sock->fd, remote_sock->host);

@@ -19,10 +19,6 @@ int main(int argc, char** argv)
 	csnet_coredump_init();
 	csnet_crypt_setup();
 
-	/*
-	daemon(1, 1);
-	*/
-
 	char* conf_file = argv[1];
 	int log_size;
 	int log_level;
@@ -37,7 +33,6 @@ int main(int argc, char** argv)
 	char* business_module;
 
 	struct csnet* csnet;
-	struct cs_lfqueue* q;
 	struct csnet_log* logger;
 	struct csnet_config* config;
 	struct csnet_module* module;
@@ -109,19 +104,17 @@ int main(int argc, char** argv)
 		log_f(logger, "could not find `business_module`!");
 	}
 
-	q = cs_lfqueue_new();
 	module = csnet_module_new();
-	conntor = csnet_conntor_new(config, logger, module, q);
-	csnet_module_init(module, conntor, q, logger, config);
+	conntor = csnet_conntor_new(config, logger, module);
+	csnet_module_init(module, conntor, logger, config);
 	csnet_module_load(module, business_module);
-	csnet = csnet_new(atoi(myport), atoi(threadcount), atoi(maxconn), logger, module, q);
+	csnet = csnet_new(atoi(myport), atoi(threadcount), atoi(maxconn), logger, module);
 
 	log_i(logger, "Server start ok ...");
 
 	csnet_conntor_loop(conntor);
 	csnet_loop(csnet, 1000);
 
-	cs_lfqueue_free(q);
 	csnet_free(csnet);
 	csnet_config_free(config);
 	csnet_module_free(module);

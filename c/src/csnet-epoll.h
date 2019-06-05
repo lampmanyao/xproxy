@@ -15,125 +15,89 @@
 #include <sys/epoll.h>
 
 typedef struct epoll_event csnet_epoller_event_t;
+typedef int csnet_ep_t;
 
-struct csnet_epoller {
-	int fd;
-	int max_events;
-	csnet_epoller_event_t* events;
+struct csnet_event {
+	bool read;
+	bool write;
+	bool eof;
+	bool error;
+	void* ptr;
 };
 
-static struct csnet_epoller*
-csnet_epoller_new(int max_events) {
-	struct csnet_epoller* epoller = calloc(1, sizeof(*epoller));
-	if (!epoller) {
-		csnet_oom(sizeof(*epoller));
+static int
+csnet_ep_open() {
+	int fd = epoll_create(1024);
+	if (fd == -1) {
+		debug("epoll_create() error: %s", strerror(errno));
+		return -1;
 	}
-
-	epoller->fd = epoll_create(1024);
-	if (epoller->fd == -1) {
-		debug("epoll_create(): %s", strerror(errno));
-		free(epoller);
-		return NULL;
-	}
-
-	epoller->max_events = max_events;
-	epoller->events = calloc(max_events, sizeof(csnet_epoller_event_t));
-
-	if (!epoller->events) {
-		csnet_oom(max_events * sizeof(csnet_epoller_event_t));
-	}
-
-	return epoller;
+	return fd;
 }
 
 static void
-csnet_epoller_free(struct csnet_epoller* epoller) {
-	close(epoller->fd);
-	free(epoller->events);
-	free(epoller);
+csnet_ep_close(csnet_ep_t ep) {
+	close(ep);
 }
 
 static int
-csnet_epoller_add(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_add(csnet_ep_t ep, int fd, void* ud) {
+	struct epoll_event ev = {
+		.events = EPOLLIN | EPOLLRDHUP | EPOLLET,
+		.data.ptr = ud
+	};
+	return epoll_ctl(ep, EPOLL_CTL_ADD, fd, &ev);
+}
+
+static int
+csnet_ep_del(csnet_ep_t ep, int fd, void* ud) {
 	struct epoll_event ev = {
 		.events = EPOLLIN | EPOLLET,
-		.data.u64 = (unsigned long)fd << 32 | sid
+		.data.ptr = ud
 	};
-	return epoll_ctl(epoller->fd, EPOLL_CTL_ADD, fd, &ev);
+	return epoll_ctl(ep, EPOLL_CTL_DEL, fd, &ev);
 }
 
 static int
-csnet_epoller_del(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_r(csnet_ep_t ep, int fd, void* ud) {
 	struct epoll_event ev = {
-		.events = EPOLLIN | EPOLLET,
-		.data.u64 = (unsigned long)fd << 32 | sid
+		.events = EPOLLIN | EPOLLRDHUP | EPOLLET,
+		.data.ptr = ud
 	};
-	return epoll_ctl(epoller->fd, EPOLL_CTL_DEL, fd, &ev);
+	return epoll_ctl(ep, EPOLL_CTL_MOD, fd, &ev);
 }
 
 static int
-csnet_epoller_r(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_w(csnet_ep_t ep, int fd, void* ud) {
 	struct epoll_event ev = {
-		.events = EPOLLIN | EPOLLET,
-		.data.u64 = (unsigned long)fd << 32 | sid
+		.events = EPOLLOUT | EPOLLRDHUP | EPOLLET,
+		.data.ptr = ud
 	};
-	return epoll_ctl(epoller->fd, EPOLL_CTL_MOD, fd, &ev);
+	return epoll_ctl(ep, EPOLL_CTL_MOD, fd, &ev);
 }
 
 static int
-csnet_epoller_w(struct csnet_epoller* epoller, int fd, unsigned int sid) {
+csnet_ep_rw(csnet_ep_t ep, int fd, void* ud) {
 	struct epoll_event ev = {
-		.events = EPOLLOUT | EPOLLET,
-		.data.u64 = (unsigned long)fd << 32 | sid
+		.events = EPOLLIN | EPOLLRDHUP |  EPOLLOUT | EPOLLET,
+		.data.ptr = ud
 	};
-	return epoll_ctl(epoller->fd, EPOLL_CTL_MOD, fd, &ev);
+	return epoll_ctl(ep, EPOLL_CTL_MOD, fd, &ev);
 }
 
 static int
-csnet_epoller_rw(struct csnet_epoller* epoller, int fd, unsigned int sid) {
-	struct epoll_event ev = {
-		.events = EPOLLIN | EPOLLOUT | EPOLLET,
-		.data.u64 = (unsigned long)fd << 32 | sid
-	};
-	return epoll_ctl(epoller->fd, EPOLL_CTL_MOD, fd, &ev);
-}
-
-static int
-csnet_epoller_wait(struct csnet_epoller* epoller, int milliseconds) {
-	return epoll_wait(epoller->fd, epoller->events, epoller->max_events, milliseconds);
-}
-
-static csnet_epoller_event_t*
-csnet_epoller_get_event(struct csnet_epoller* epoller, int index) {
-	if (index < epoller->max_events) {
-		return &epoller->events[index];
+csnet_ep_wait(csnet_ep_t ep, struct csnet_event* e, int max, int ms) {
+	struct epoll_event ev[max];
+	int r = epoll_wait(ep, ev, max, ms);
+	for (int i = 0; i < r; i++) {
+		e[i].ptr = ev[i].data.ptr;
+		unsigned flag = ev[i].events;
+		e[i].eof = (flag & EPOLLRDHUP) != 0;
+		e[i].write = (flag & EPOLLOUT) != 0;
+		e[i].read = (flag & EPOLLIN) != 0;
+		e[i].error = (flag & EPOLLERR) != 0;
 	}
-	return NULL;
-}
-
-static bool
-csnet_epoller_event_is_r(csnet_epoller_event_t* event) {
-	return event->events & EPOLLIN;
-}
-
-static bool
-csnet_epoller_event_is_w(csnet_epoller_event_t* event) {
-	return event->events & EPOLLOUT;
-}
-
-static bool
-csnet_epoller_event_is_e(csnet_epoller_event_t* event) {
-	return event->events & (EPOLLERR | EPOLLHUP);
-}
-
-static int
-csnet_epoller_event_fd(csnet_epoller_event_t* event) {
-	return event->data.u64 >> 32;
-}
-
-static unsigned int
-csnet_epoller_event_sid(csnet_epoller_event_t* event) {
-	return event->data.u64 & 0xffffUL;
+	return r;
 }
 
 #endif

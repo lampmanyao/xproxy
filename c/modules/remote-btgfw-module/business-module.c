@@ -14,16 +14,13 @@ static int client_handler(struct csnet_socket* client_sock, int stage, char* dat
 static int remote_handler(struct csnet_socket* target_sock, int stage, char* data, int len);
 
 struct csnet_log* LOG = NULL;
-struct cs_lfqueue* Q = NULL;
 struct csnet_conntor* CONNTOR = NULL;
 char* passwd;
 
 int
-business_init(struct csnet_conntor* conntor, struct cs_lfqueue* q,
-	      struct csnet_log* log, struct csnet_config* config) {
+business_init(struct csnet_conntor* conntor, struct csnet_log* log, struct csnet_config* config) {
 	CONNTOR = conntor;
 	LOG = log;
-	Q = q;
 
 	rand();
 
@@ -88,8 +85,6 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 		uint8_t rsv = plaintext[2 + RANDOM_SIZE];
 		uint8_t typ = plaintext[3 + RANDOM_SIZE];
 
-		log_d(LOG, "ver=%d, cmd=%d, rsv=%d, typ=%d", ver, cmd, rsv, typ);
-
 		if (typ == SOCKS5_ATYP_IPv4) {
 			char reply[256];
 			char ipv4[32];
@@ -98,7 +93,6 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 			struct csnet_socket* target_sock;
 			char* cipher_reply;
 			int cipher_reply_len;
-			struct csnet_msg* msg;
 
 			uint8_t p0 = plaintext[4 + RANDOM_SIZE];
 			uint8_t p1 = plaintext[5 + RANDOM_SIZE];
@@ -122,7 +116,7 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 			target_sock->host[ipv4_str_len] = '\0';
 
 			log_d(LOG, "exhost: socket %d >>> socket %d (%s)",
-				  client_sock->fd, target_sock->fd, ipv4);
+			      client_sock->fd, target_sock->fd, ipv4);
 
 			int64_t randnum = random();
 			memcpy(reply, &randnum, RANDOM_SIZE);
@@ -140,15 +134,14 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 
 			if (cipher_reply_len < 0) {
 				log_e(LOG, "encrypt error. socket %d >>> socket %d (%s)",
-					  client_sock->fd, target_sock->fd, ipv4);
+				      client_sock->fd, target_sock->fd, ipv4);
 				free(plaintext);
 				return -1;
 			}
 
-			msg = csnet_msg_new(4 + cipher_reply_len, client_sock);
-			csnet_msg_append(msg, (char*)&cipher_reply_len, 4);
-			csnet_msg_append(msg, cipher_reply, cipher_reply_len);
-			csnet_sendto(Q, msg);
+			csnet_sb_append(&client_sock->sb, (char*)&cipher_reply_len, 4);
+			csnet_sb_append(&client_sock->sb, cipher_reply, cipher_reply_len);
+			csnet_socket_send(client_sock);
 
 			log_d(LOG, "exhost: socket %d <<< socket %d (%s)",
 				  client_sock->fd, target_sock->fd, ipv4);
@@ -172,7 +165,6 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 			char reply[256];
 			char* cipher_reply;
 			int cipher_reply_len;
-			struct csnet_msg* msg;
 
 			domain_name_len = plaintext[SOCKS5_REQ_HEAD_SIZE + RANDOM_SIZE];
 			memcpy(domain_name,
@@ -223,10 +215,9 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 				return -1;
 			}
 
-			msg = csnet_msg_new(4 + cipher_reply_len, client_sock);
-			csnet_msg_append(msg, (char*)&cipher_reply_len, 4);
-			csnet_msg_append(msg, cipher_reply, cipher_reply_len);
-			csnet_sendto(Q, msg);
+			csnet_sb_append(&client_sock->sb, (char*)&cipher_reply_len, 4);
+			csnet_sb_append(&client_sock->sb, cipher_reply, cipher_reply_len);
+			csnet_socket_send(client_sock);
 
 			log_d(LOG, "exhost: socket %d <<< socket %d (%s)",
 			      client_sock->fd, target_sock->fd, domain_name);
@@ -253,12 +244,14 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 
 	case SOCKS5_STAGE_STREAM: {
 		struct csnet_socket* target_sock = client_sock->sock;
+		if (!target_sock) {
+			ret = -1;
+			break;
+		}
 		log_d(LOG, "stream: socket %d >>> socket %d (%s)",
-			  client_sock->fd, target_sock->fd, target_sock->host);
-		struct csnet_msg* msg;
-		msg = csnet_msg_new(len, target_sock);
-		csnet_msg_append(msg, data, len);
-		csnet_sendto(Q, msg);
+		      client_sock->fd, target_sock->fd, target_sock->host);
+		csnet_sb_append(&target_sock->sb, data, len);
+		csnet_socket_send(target_sock);
 		ret = len;
 		break;
 	}
@@ -273,11 +266,14 @@ client_handler(struct csnet_socket* client_sock, int stage, char* data, int len)
 
 static int
 remote_handler(struct csnet_socket* target_sock, int stage, char* data, int len) {
-	struct csnet_msg* msg;
 	struct csnet_socket* client_sock = target_sock->sock;
-	msg = csnet_msg_new(len, client_sock);
-	csnet_msg_append(msg, data, len);
-	csnet_sendto(Q, msg);
+
+	if (!client_sock) {
+		return -1;
+	}
+
+	csnet_sb_append(&client_sock->sb, data, len);
+	csnet_socket_send(client_sock);
 
 	log_d(LOG, "stream: socket %d <<< socket %d (%s)",
 	      client_sock->fd, target_sock->fd, target_sock->host);

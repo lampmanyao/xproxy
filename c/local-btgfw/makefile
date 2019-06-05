@@ -27,4 +27,4 @@ $(obj_dir)/%.o: %.c | $(obj_dir)
 clean:
 	rm -rf $(obj_dir)
 	rm -f $(target)
-	rm -f *.log nohup.out *.pid
+	rm -f nohup.out *.pid

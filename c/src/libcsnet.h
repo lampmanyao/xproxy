@@ -1,6 +1,5 @@
 #pragma once
 
-#include "cs-lfqueue.h"
 #include "csnet-atomic.h"
 #include "csnet-cond.h"
 #include "csnet-config.h"
