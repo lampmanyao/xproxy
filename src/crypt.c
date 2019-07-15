@@ -11,7 +11,6 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 
-static unsigned char IV[17];
 static pthread_mutex_t *lock_cs;
 static long *lock_count;
 
@@ -31,15 +30,6 @@ pthreads_thread_id(void)
 {
 	unsigned long ret = (unsigned long)pthread_self();
 	return ret;
-}
-
-static int
-md5(const char *str, unsigned char *buff) {
-	MD5_CTX md5_ctx;
-	MD5_Init(&md5_ctx);
-	MD5_Update(&md5_ctx, str, strlen(str));
-	MD5_Final(buff, &md5_ctx);
-	return 0;
 }
 
 void
@@ -68,7 +58,7 @@ crypt_setup(void)
 		pthread_mutex_init(&lock_cs[i], NULL);
 	}
 	CRYPTO_set_id_callback((unsigned long (*)())pthreads_thread_id);
-	CRYPTO_set_locking_callback((void (*)(int, int, const char*, int))pthreads_locking_callback);
+	CRYPTO_set_locking_callback((void (*)(int, int, const char *, int))pthreads_locking_callback);
 }
 
 void
@@ -85,34 +75,104 @@ crypt_cleanup(void)
 	ERR_free_strings();
 }
 
-void
-crypt_set_iv(const char *password)
+static int encrypt_128cfb(struct cryptor *c, char **ciphertext, char *plaintext, unsigned int length);
+static int decrypt_128cfb(struct cryptor *c, char **plaintext, char *ciphertext, unsigned int length);
+
+static int encrypt_192cfb(struct cryptor *c, char **ciphertext, char *plaintext, unsigned int length);
+static int decrypt_192cfb(struct cryptor *c, char **plaintext, char *ciphertext, unsigned int length);
+
+static int encrypt_256cfb(struct cryptor *c, char **ciphertext, char *plaintext, unsigned int length);
+static int decrypt_256cfb(struct cryptor *c, char **plaintext, char *ciphertext, unsigned int length);
+
+
+static void
+generate_key(unsigned char *key, int key_size, const char *password)
 {
-	md5(password, IV);
-	IV[16] = '\0';
+	int i, j;
+	unsigned char buffer[MD5_DIGEST_LENGTH] = {0};
+	MD5_CTX md5_ctx;
+	MD5_Init(&md5_ctx);
+	MD5_Update(&md5_ctx, password, strlen(password));
+	MD5_Final(buffer, &md5_ctx);
+
+	i = MD5_DIGEST_LENGTH;
+	j = 0;
+	while (i--) {
+		key[i] = buffer[j++];
+	}
+
+	j = 0;
+	for (i = MD5_DIGEST_LENGTH; i < key_size; i++) {
+		key[i] = buffer[j++];
+	}
+
+	key[key_size] = '\0';
 }
 
-static int
-encrypt_128cfb(struct cryptor *c, char **ciphertext,
-		char *plaintext, unsigned int length);
+static void
+generate_iv(unsigned char *iv, int iv_size, const unsigned char *str, unsigned long len) {
+	int i;
+	unsigned char buffer[MD5_DIGEST_LENGTH] = {0};
+	MD5_CTX md5_ctx;
+	MD5_Init(&md5_ctx);
+	MD5_Update(&md5_ctx, str, len);
+	MD5_Final(buffer, &md5_ctx);
 
-static int
-decrypt_128cfb(struct cryptor *c, char **plaintext,
-		char *ciphertext, unsigned int length);
+	for (i = 0; i < MD5_DIGEST_LENGTH; i++) {
+		iv[i] = buffer[i];
+	}
 
+	while (i++ < iv_size - 1) {
+		iv[i] = buffer[i - MD5_DIGEST_LENGTH];
+	}
+}
+
+struct cipher {
+	const char *name;
+	int key_size;
+	int iv_size;
+	int (*encrypt)(struct cryptor *c, char **, char *, unsigned int);
+	int (*decrypt)(struct cryptor *c, char **, char *, unsigned int);
+};
+
+static struct cipher ciphers[] = {
+	/* name         key_size iv_size encrypt_cb      decrypt_cb */
+	{"aes-128-cfb", 16,      16,     encrypt_128cfb, decrypt_128cfb},
+	{"aes-192-cfb", 24,      24,     encrypt_192cfb, decrypt_192cfb},
+	{"aes-256-cfb", 32,      32,     encrypt_256cfb, decrypt_256cfb},
+	{NULL,          0,       0,      NULL,           NULL}
+};
 
 int
-cryptor_init(struct cryptor *c, const char* method, const char* password)
+cryptor_init(struct cryptor *c, const char *method, const char *password)
 {
 	assert(c != NULL);
 	assert(method != NULL);
 	assert(password != NULL);
 
-	c->password = strdup(password);
-	md5(c->password, c->iv);
-	c->iv[16] = '\0';
-	c->encrypt = encrypt_128cfb;
-	c->decrypt = decrypt_128cfb;
+	const struct cipher* cipher = ciphers;
+
+	while (cipher->name) {
+		if (strcmp(cipher->name, method) == 0)
+			break;
+		cipher++;
+	}
+
+	if (!cipher->name) {
+		return -1;
+	}
+
+	c->key = malloc((size_t)cipher->key_size + 1);
+	c->key_size = cipher->key_size;
+	generate_key(c->key, c->key_size, password);
+
+
+	c->iv = malloc((size_t)cipher->iv_size);
+	c->iv_size = cipher->iv_size;
+	generate_iv(c->iv, c->iv_size, c->key, (unsigned long)cipher->key_size);
+
+	c->encrypt = cipher->encrypt;
+	c->decrypt = cipher->decrypt;
 
 	return 0;
 }
@@ -120,7 +180,9 @@ cryptor_init(struct cryptor *c, const char* method, const char* password)
 void
 cryptor_deinit(struct cryptor *c)
 {
-	free(c->password);
+	assert(c != NULL);
+	free(c->key);
+	free(c->iv);
 }
 
 static int
@@ -130,7 +192,8 @@ encrypt_128cfb(struct cryptor *c, char **ciphertext,
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
 	if (EVP_EncryptInit_ex(ctx, EVP_aes_128_cfb(), NULL,
-			       (const unsigned char*)c->password, c->iv) != 1) {
+			       (const unsigned char *)c->key,
+			       (const unsigned char *)c->iv) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		return -1;
 	}
@@ -139,15 +202,15 @@ encrypt_128cfb(struct cryptor *c, char **ciphertext,
 	int ciphertext_len = 0;
 	*ciphertext = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_EncryptUpdate(ctx, (unsigned char*)*ciphertext, &len,
-			      (unsigned char*)plaintext, (int)length) != 1) {
+	if (EVP_EncryptUpdate(ctx, (unsigned char *)*ciphertext, &len,
+			      (unsigned char *)plaintext, (int)length) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*ciphertext);
 		return -1;
 	}
 
 	ciphertext_len = len;
-	if (EVP_EncryptFinal_ex(ctx, (unsigned char*)(*ciphertext) + len, &len) != 1) {
+	if (EVP_EncryptFinal_ex(ctx, (unsigned char *)(*ciphertext) + len, &len) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*ciphertext);
 		return -1;
@@ -166,7 +229,8 @@ decrypt_128cfb(struct cryptor *c, char **plaintext,
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
 	if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cfb(), NULL,
-			       (const unsigned char*)c->password, c->iv) != 1) {
+			       (const unsigned char *)c->key,
+			       (const unsigned char *)c->iv) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		return -1;
 	}
@@ -175,15 +239,15 @@ decrypt_128cfb(struct cryptor *c, char **plaintext,
 	int plaintext_len = 0;
 	*plaintext = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_DecryptUpdate(ctx, (unsigned char*)*plaintext, &len,
-			      (unsigned char*)ciphertext, (int)length) != 1) {
+	if (EVP_DecryptUpdate(ctx, (unsigned char *)*plaintext, &len,
+			      (unsigned char *)ciphertext, (int)length) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*plaintext);
 		return -1;
 	}
 
 	plaintext_len = len;
-	if (EVP_DecryptFinal_ex(ctx, (unsigned char*)(*plaintext) + len, &len) != 1) {
+	if (EVP_DecryptFinal_ex(ctx, (unsigned char *)(*plaintext) + len, &len) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*plaintext);
 		return -1;
@@ -195,14 +259,15 @@ decrypt_128cfb(struct cryptor *c, char **plaintext,
 	return plaintext_len;
 }
 
-int
-crypt_128cfb_encrypt(char **ciphertext, char *plaintext,
-		     unsigned int length, const char *key)
+static int
+encrypt_192cfb(struct cryptor *c, char **ciphertext,
+		char *plaintext, unsigned int length)
 {
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
-	if (EVP_EncryptInit_ex(ctx, EVP_aes_128_cfb(), NULL,
-			       (const unsigned char*)key, IV) != 1) {
+	if (EVP_EncryptInit_ex(ctx, EVP_aes_192_cfb(), NULL,
+			       (const unsigned char *)c->key,
+			       (const unsigned char *)c->iv) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		return -1;
 	}
@@ -211,15 +276,15 @@ crypt_128cfb_encrypt(char **ciphertext, char *plaintext,
 	int ciphertext_len = 0;
 	*ciphertext = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_EncryptUpdate(ctx, (unsigned char*)*ciphertext, &len,
-			      (unsigned char*)plaintext, (int)length) != 1) {
+	if (EVP_EncryptUpdate(ctx, (unsigned char *)*ciphertext, &len,
+			      (unsigned char *)plaintext, (int)length) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*ciphertext);
 		return -1;
 	}
 
 	ciphertext_len = len;
-	if (EVP_EncryptFinal_ex(ctx, (unsigned char*)(*ciphertext) + len, &len) != 1) {
+	if (EVP_EncryptFinal_ex(ctx, (unsigned char *)(*ciphertext) + len, &len) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*ciphertext);
 		return -1;
@@ -231,14 +296,15 @@ crypt_128cfb_encrypt(char **ciphertext, char *plaintext,
 	return ciphertext_len;
 }
 
-int
-crypt_128cfb_decrypt(char **plaintext, char *ciphertext,
-		     unsigned int length, const char *key)
+static int
+decrypt_192cfb(struct cryptor *c, char **plaintext,
+		char *ciphertext, unsigned int length)
 {
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
-	if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cfb(), NULL,
-			       (const unsigned char*)key, IV) != 1) {
+	if (EVP_DecryptInit_ex(ctx, EVP_aes_192_cfb(), NULL,
+			       (const unsigned char *)c->key,
+			       (const unsigned char *)c->iv) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		return -1;
 	}
@@ -247,15 +313,15 @@ crypt_128cfb_decrypt(char **plaintext, char *ciphertext,
 	int plaintext_len = 0;
 	*plaintext = malloc(length + EVP_MAX_BLOCK_LENGTH);
 
-	if (EVP_DecryptUpdate(ctx, (unsigned char*)*plaintext, &len,
-			      (unsigned char*)ciphertext, (int)length) != 1) {
+	if (EVP_DecryptUpdate(ctx, (unsigned char *)*plaintext, &len,
+			      (unsigned char *)ciphertext, (int)length) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*plaintext);
 		return -1;
 	}
 
 	plaintext_len = len;
-	if (EVP_DecryptFinal_ex(ctx, (unsigned char*)(*plaintext) + len, &len) != 1) {
+	if (EVP_DecryptFinal_ex(ctx, (unsigned char *)(*plaintext) + len, &len) != 1) {
 		EVP_CIPHER_CTX_free(ctx);
 		free(*plaintext);
 		return -1;
@@ -267,6 +333,79 @@ crypt_128cfb_decrypt(char **plaintext, char *ciphertext,
 	return plaintext_len;
 }
 
+static int
+encrypt_256cfb(struct cryptor *c, char **ciphertext,
+		char *plaintext, unsigned int length)
+{
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+
+	if (EVP_EncryptInit_ex(ctx, EVP_aes_256_cfb(), NULL,
+			       (const unsigned char *)c->key,
+			       (const unsigned char *)c->iv) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
+		return -1;
+	}
+
+	int len = 0;
+	int ciphertext_len = 0;
+	*ciphertext = malloc(length + EVP_MAX_BLOCK_LENGTH);
+
+	if (EVP_EncryptUpdate(ctx, (unsigned char *)*ciphertext, &len,
+			      (unsigned char *)plaintext, (int)length) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
+		free(*ciphertext);
+		return -1;
+	}
+
+	ciphertext_len = len;
+	if (EVP_EncryptFinal_ex(ctx, (unsigned char *)(*ciphertext) + len, &len) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
+		free(*ciphertext);
+		return -1;
+	}
+
+	ciphertext_len += len;
+	EVP_CIPHER_CTX_free(ctx);
+
+	return ciphertext_len;
+}
+
+static int
+decrypt_256cfb(struct cryptor *c, char **plaintext,
+		char *ciphertext, unsigned int length)
+{
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+
+	if (EVP_DecryptInit_ex(ctx, EVP_aes_256_cfb(), NULL,
+			       (const unsigned char *)c->key,
+			       (const unsigned char *)c->iv) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
+		return -1;
+	}
+
+	int len = 0;
+	int plaintext_len = 0;
+	*plaintext = malloc(length + EVP_MAX_BLOCK_LENGTH);
+
+	if (EVP_DecryptUpdate(ctx, (unsigned char *)*plaintext, &len,
+			      (unsigned char *)ciphertext, (int)length) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
+		free(*plaintext);
+		return -1;
+	}
+
+	plaintext_len = len;
+	if (EVP_DecryptFinal_ex(ctx, (unsigned char *)(*plaintext) + len, &len) != 1) {
+		EVP_CIPHER_CTX_free(ctx);
+		free(*plaintext);
+		return -1;
+	}
+
+	plaintext_len += len;
+	EVP_CIPHER_CTX_free(ctx);
+
+	return plaintext_len;
+}
 
 #if defined CRYPT_MAIN_TEST
 
@@ -274,54 +413,109 @@ crypt_128cfb_decrypt(char **plaintext, char *ciphertext,
 // macos: gcc -DCRYPT_MAIN_TEST -o a.out crypt.c -I/usr/local/Cellar/openssl/1.0.2s/include -L/usr/local/Cellar/openssl/1.0.2s/lib -lssl -lcrypto
 // linux: gcc -DCRYPT_MAIN_TEST -o a.out crypt.c -lssl -lcrypto
 
+void
+aes_128_cfb_test(void)
+{
+	char *pass= "1234567887654321";
+	char *plaintext = "Hey, this is an aes-128-cfb encryption/decryption test.";
+
+	struct cryptor c1;
+	struct cryptor c2;
+
+	cryptor_init(&c1, "aes-128-cfb", pass);
+	cryptor_init(&c2, "aes-128-cfb", pass);
+
+	int length = strlen(plaintext);
+	char *ciphertext;
+	int ciphertext_len = c1.encrypt(&c1, &ciphertext, plaintext, length);
+
+	char *rawtext;
+	int rawtext_len = c2.decrypt(&c2, &rawtext, ciphertext, ciphertext_len);
+
+	if (memcmp(plaintext, rawtext, rawtext_len) == 0) {
+		printf("aes-128-cfb test pass\n");
+	} else {
+		printf("aes-128-cfb test failed\n");
+	}
+
+	free(ciphertext);
+	free(rawtext);
+
+	cryptor_deinit(&c1);
+	cryptor_deinit(&c2);
+}
+
+void
+aes_192_cfb_test(void)
+{
+	char *pass= "1234567887654321";
+	char *plaintext = "Hey, this is an aes-192-cfb encryption/decryption test.";
+
+	struct cryptor c1;
+	struct cryptor c2;
+
+	cryptor_init(&c1, "aes-192-cfb", pass);
+	cryptor_init(&c2, "aes-192-cfb", pass);
+
+	int length = strlen(plaintext);
+	char *ciphertext;
+	int ciphertext_len = c1.encrypt(&c1, &ciphertext, plaintext, length);
+
+	char *rawtext;
+	int rawtext_len = c2.decrypt(&c2, &rawtext, ciphertext, ciphertext_len);
+
+	if (memcmp(plaintext, rawtext, rawtext_len) == 0) {
+		printf("aes-192-cfb test pass\n");
+	} else {
+		printf("aes-192-cfb test failed\n");
+	}
+
+	free(ciphertext);
+	free(rawtext);
+
+	cryptor_deinit(&c1);
+	cryptor_deinit(&c2);
+}
+
+void
+aes_256_cfb_test(void)
+{
+	char *pass= "12345678asdfasfasdfasdfasdfasdfasdfadsfasdfasf";
+	char *plaintext = "Hey, this is an aes-256-cfb encryption/decryption test.";
+
+	struct cryptor c1;
+	struct cryptor c2;
+
+	cryptor_init(&c1, "aes-256-cfb", pass);
+	cryptor_init(&c2, "aes-256-cfb", pass);
+
+	int length = strlen(plaintext);
+	char *ciphertext;
+	int ciphertext_len = c1.encrypt(&c1, &ciphertext, plaintext, length);
+
+	char *rawtext;
+	int rawtext_len = c2.decrypt(&c2, &rawtext, ciphertext, ciphertext_len);
+
+	if (memcmp(plaintext, rawtext, rawtext_len) == 0) {
+		printf("aes-256-cfb test pass\n");
+	} else {
+		printf("aes-256-cfb test failed\n");
+	}
+
+	free(ciphertext);
+	free(rawtext);
+
+	cryptor_deinit(&c1);
+	cryptor_deinit(&c2);
+}
+
 int main()
 {
 	crypt_setup();
-	char *key = "helloworld";
-	crypt_set_iv(key);
 
-	{
-		char *plaintext = "ASDASDSADASDASDASD";
-		int length = strlen(plaintext);
-		printf("plaintext length = %d\n", length);
-		char *ciphertext;
-		int ciphertext_len = crypt_128cfb_encrypt(&ciphertext, plaintext, length, key);
-		printf("encrypted text length = %d\n", ciphertext_len);
-
-		char *rawtext;
-		int rawtext_len = crypt_128cfb_decrypt(&rawtext, ciphertext, ciphertext_len, key);
-
-		printf("decrypted text length = %d\n", rawtext_len);
-		printf("before encrypted: %s\n", plaintext);
-		printf("atfer decrypted: %s\n", rawtext);
-
-		free(ciphertext);
-		free(rawtext);
-	}
-
-	{
-		struct cryptor c;
-		cryptor_init(&c, "hel", key);
-
-		char *plaintext = "ASDASDSADASDASDASD";
-		int length = strlen(plaintext);
-		printf("plaintext length = %d\n", length);
-		char *ciphertext;
-		int ciphertext_len = c.encrypt(&c, &ciphertext, plaintext, length);
-		printf("encrypted text length = %d\n", ciphertext_len);
-
-		char *rawtext;
-		int rawtext_len = c.decrypt(&c, &rawtext, ciphertext, ciphertext_len);
-
-		printf("decrypted text length = %d\n", rawtext_len);
-		printf("before encrypted: %s\n", plaintext);
-		printf("atfer decrypted: %s\n", rawtext);
-
-		free(ciphertext);
-		free(rawtext);
-
-		cryptor_deinit(&c);
-	}
+	aes_128_cfb_test();
+	aes_192_cfb_test();
+	aes_256_cfb_test();
 
 	crypt_cleanup();
 

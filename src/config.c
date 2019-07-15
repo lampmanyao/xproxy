@@ -7,8 +7,8 @@
 #include <assert.h>
 #include <string.h>
 
-static void
-load_defaults(struct cfgopts config_options[])
+void
+config_load_defaults(struct cfgopts config_options[])
 {
 	int i;
 	void *ptr;
@@ -32,7 +32,7 @@ load_defaults(struct cfgopts config_options[])
 }
 
 int
-config_init(const char *configfile, struct cfgopts config_options[])
+config_load_file(const char *configfile, struct cfgopts config_options[])
 {
 	char buff[1024];
 	char *ptr;
@@ -42,8 +42,6 @@ config_init(const char *configfile, struct cfgopts config_options[])
 	size_t len;
 	char *tmpptr;
 	char *eqsign;
-
-	load_defaults(config_options);
 
 	FILE *f = fopen(configfile, "r");
 	if (!f) {

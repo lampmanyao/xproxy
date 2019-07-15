@@ -27,7 +27,7 @@ static int
 poller_open() {
 	int fd = epoll_create(1024);
 	if (fd == -1) {
-		fatal("epoll_create() error: %s", strerror(errno));
+		FATAL("epoll_create() error: %s", strerror(errno));
 	}
 	return fd;
 }
@@ -116,7 +116,7 @@ static int
 poller_open() {
 	int fd = kqueue();
 	if (fd == -1) {
-		fatal("keueue() error: %s", strerror(errno));
+		FATAL("keueue() error: %s", strerror(errno));
 	}
 
 	return fd;

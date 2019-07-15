@@ -6,7 +6,7 @@
 
 #define BTGFW_MAJOR "0"
 #define BTGFW_MINOR "5"
-#define BTGFW_REVISION "0"
+#define BTGFW_REVISION "1"
 
 struct btgfw;
 

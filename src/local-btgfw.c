@@ -19,8 +19,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#define RANDOM_SIZE sizeof(int64_t)
-
 static void accept_cb(struct btgfw *btgfw, int lfd);
 static void recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static void sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
@@ -29,6 +27,7 @@ static void sendto_remote_cb(struct el *el, struct tcp_connection *tcp_conn);
 
 struct local_config {
 	char *password;
+	char *method;
 	char *local_addr;
 	int local_port;
 	char *remote_addr;
@@ -39,16 +38,19 @@ struct local_config {
 } configuration;
 
 struct cfgopts cfg_opts[] = {
-	{ "password", TYP_STRING, &configuration.password, {0, "pa$$w0rld"} },
+	{ "password", TYP_STRING, &configuration.password, {0, "helloworld"} },
+	{ "method", TYP_STRING, &configuration.method, {0, "aes-256-cfb"} },
 	{ "local_addr", TYP_STRING, &configuration.local_addr, {0, "127.0.0.1"} },
-	{ "local_port", TYP_INT4, &configuration.local_port, {10086, NULL} },
-	{ "remote_addr", TYP_STRING, &configuration.remote_addr, {0, "127.0.0.1"} },
-	{ "remote_port", TYP_INT4, &configuration.remote_port, {20086, NULL} },
-	{ "nthread", TYP_INT4, &configuration.nthread, {4, NULL} },
+	{ "local_port", TYP_INT4, &configuration.local_port, {1080, NULL} },
+	{ "remote_addr", TYP_STRING, &configuration.remote_addr, {0, NULL} },
+	{ "remote_port", TYP_INT4, &configuration.remote_port, {0, NULL} },
+	{ "nthread", TYP_INT4, &configuration.nthread, {8, NULL} },
 	{ "maxfiles", TYP_INT4, &configuration.maxfiles, {1024, NULL} },
 	{ "verbose", TYP_INT4, &configuration.verbose, {0, NULL} },
 	{ NULL, 0, NULL, {0, NULL} }
 };
+
+static struct cryptor cryptor;
 
 static void
 accept_cb(struct btgfw *btgfw, int lfd)
@@ -62,7 +64,8 @@ accept_cb(struct btgfw *btgfw, int lfd)
 
 	if (fd > 0) {
 		if (configuration.verbose)
-			DEBUG("accept incoming from %s:%d with client %d", inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
+			DEBUG("accept incoming from %s:%d with client %d",
+			      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
 
 		set_nonblocking(fd);
 		tcp_conn = new_tcp_connection(fd, 8192, recvfrom_client_cb, sendto_client_cb);
@@ -70,7 +73,6 @@ accept_cb(struct btgfw *btgfw, int lfd)
 	} else {
 		if (errno != EAGAIN && errno != EWOULDBLOCK) {
 			ERROR("accept(): %s", strerror(errno));
-			return;
 		}
 	}
 }
@@ -202,15 +204,9 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		remote->peer_tcp_conn = client;
 		client->peer_tcp_conn = remote;
 
-		int64_t randnum = random();
+		memcpy(request, data, SOCKS5_IPV4_REQ_SIZE);
 
-		memcpy(request, &randnum, RANDOM_SIZE);
-		memcpy(request + RANDOM_SIZE, data, SOCKS5_IPV4_REQ_SIZE);
-
-		int ciphertext_len = crypt_128cfb_encrypt(&ciphertext,
-							  request,
-							  SOCKS5_IPV4_REQ_SIZE + RANDOM_SIZE,
-							  configuration.password);
+		int ciphertext_len = cryptor.encrypt(&cryptor, &ciphertext, request, SOCKS5_IPV4_REQ_SIZE);
 		if (ciphertext_len < 0) {
 			ERROR("encryption failure.");
 			el_stop_watch(el, client);
@@ -238,7 +234,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		char domain_name[256];
 		uint16_t nport;
 		char request[515];
-		int req_len;
+		unsigned int req_len;
 		int fd;
 
 		domain_name_len = (uint8_t)data[SOCKS5_REQ_HEAD_SIZE];
@@ -279,14 +275,10 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		remote->peer_tcp_conn = client;
 		client->peer_tcp_conn = remote;
 
-		int64_t randnum = random();
-		memcpy(request, &randnum, RANDOM_SIZE);
-		memcpy(request + RANDOM_SIZE, data, req_len);
+		memcpy(request, data, req_len);
 
-		int ciphertext_len = crypt_128cfb_encrypt(&ciphertext,
-							   request,
-							   req_len + RANDOM_SIZE,
-							   configuration.password);
+		int ciphertext_len = cryptor.encrypt(&cryptor, &ciphertext, request, req_len);
+
 		if (ciphertext_len < 0) {
 			ERROR("encryption failed.");
 			el_stop_watch(el, client);
@@ -540,10 +532,7 @@ remote_exchange_host(struct el *el, struct tcp_connection *remote)
 		return;
 	}
 
-	plaintext_len = crypt_128cfb_decrypt(&plaintext,
-					      data + 4,
-					      (unsigned int)ciphertext_len,
-					      configuration.password);
+	plaintext_len = cryptor.decrypt(&cryptor, &plaintext, data + 4, (unsigned int)ciphertext_len);
 	if (plaintext_len < 0) {
 		el_stop_watch(el, client);
 		free_tcp_connection(client);
@@ -555,18 +544,18 @@ remote_exchange_host(struct el *el, struct tcp_connection *remote)
 	/* skip already handled */
 	tcp_connection_rbuf_seek(remote, (size_t)(4 + ciphertext_len));
 
-	uint8_t ver = plaintext[0 + RANDOM_SIZE];
-	uint8_t rsp = plaintext[1 + RANDOM_SIZE];
-	uint8_t rsv = plaintext[2 + RANDOM_SIZE];
-	uint8_t typ = plaintext[3 + RANDOM_SIZE];
+	uint8_t ver = plaintext[0];
+	uint8_t rsp = plaintext[1];
+	uint8_t rsv = plaintext[2];
+	uint8_t typ = plaintext[3];
 
 	if (typ == SOCKS5_ATYP_IPv4) {
-		memcpy(reply, plaintext + RANDOM_SIZE, 10);
+		memcpy(reply, plaintext, 10);
 		tcp_connection_sbuf_append(client, reply, 10);
 		goto reply_to_client;
 	} else if (typ == SOCKS5_ATYP_DONAME) {
-		uint8_t domain_name_len = plaintext[SOCKS5_RSP_HEAD_SIZE + RANDOM_SIZE];
-		memcpy(reply, plaintext + RANDOM_SIZE, SOCKS5_RSP_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE);
+		uint8_t domain_name_len = plaintext[SOCKS5_RSP_HEAD_SIZE];
+		memcpy(reply, plaintext, SOCKS5_RSP_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE);
 		tcp_connection_sbuf_append(client, reply, SOCKS5_RSP_HEAD_SIZE + 1 + domain_name_len + SOCKS5_PORT_SIZE);
 		goto reply_to_client;
 	} else if (typ == SOCKS5_ATYP_IPv6) {
@@ -786,22 +775,83 @@ sendto_remote_cb(struct el *el, struct tcp_connection *remote)
 static void
 usage(void)
 {
-	printf("Usage: local-btgfw [-h] [-v] [-c config]\n");
+	printf("\nusage:\n");
+	printf("    local-btgfw\n");
+	printf("        -b <local-address>    Local address to bind: 127.0.0.1 or 0.0.0.0.\n");
+	printf("        -l <local-port>       Port number for listen.\n");
+	printf("        -r <remote-address>   Host name or IP address of remote btgfw.\n");
+	printf("        -p <remote-port>      Port number of remote btgfw.\n");
+	printf("        -k <password>         Password.\n");
+	printf("        [-e <method>]         Cipher suite: aes-128-cfb, aes-192-cfb, aes-256-cfb.\n");
+	printf("        [-t <nthread>         I/O thread number. Default value is 8.\n");
+	printf("        [-m <max-open-files>  Max open files number. Default value is 1024.\n");
+	printf("        [-v]                  Verbose mode.\n");
+	printf("        [-V]                  Version. Print version info.\n");
+	printf("        [-h]                  Help. Print this usage.\n");
 	exit(-1);
 }
 
 int main(int argc, char **argv)
 {
 	int ch;
-	int vflag = 0;
+	int bflag = 0;
+	int lflag = 0;
+	int rflag = 0;
+	int pflag = 0;
+	int kflag = 0;
+	int Vflag = 0;  /* version */
 	int cflag = 0;
 	int hflag = 0;
+
 	const char *conf_file;
 
-	while ((ch = getopt(argc, argv, "vc:h")) != -1) {
+	config_load_defaults(cfg_opts);
+
+	while ((ch = getopt(argc, argv, "b:l:r:p:k:e:t:m:c:vVh")) != -1) {
 		switch (ch) {
+		case 'b':
+			bflag = 1;
+			configuration.local_addr = optarg;
+			break;
+
+		case 'l':
+			lflag = 1;
+			configuration.local_port = atoi(optarg);
+			break;
+
+		case 'r':
+			rflag = 1;
+			configuration.remote_addr = optarg;
+			break;
+
+		case 'p':
+			pflag = 1;
+			configuration.remote_port = atoi(optarg);
+			break;
+
+		case 'k':
+			kflag = 1;
+			configuration.password = optarg;
+			break;
+
+		case 'e':
+			configuration.method = optarg;
+			break;
+
+		case 't':
+			configuration.nthread = atoi(optarg);
+			break;
+
+		case 'm':
+			configuration.maxfiles = atoi(optarg);
+			break;
+
 		case 'v':
-			vflag = 1;
+			configuration.verbose = 1;
+			break;
+
+		case 'V':
+			Vflag = 1;
 			break;
 
 		case 'c':
@@ -822,44 +872,51 @@ int main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (vflag) {
-		printf("btgfw version: %s\n\n", btgfw_version());
+	if (Vflag) {
+		printf("\nbtgfw version: %s\n\n", btgfw_version());
 	}
 
 	if (hflag) {
 		usage();
+	}	
+
+	/*  We load the config file first. */
+	if (cflag) {
+		config_load_file(conf_file, cfg_opts);
+	} else {
+		if (!bflag || !lflag || !rflag || !pflag || !kflag) {
+			usage();
+		}
 	}
 
 	signals_init();
 	coredump_init();
 	crypt_setup();
-	rand();
+
+	if (cryptor_init(&cryptor, configuration.method, configuration.password) == -1) {
+		ERROR("unsupport method: %s", configuration.method);
+		return -1;
+	}
 
 	int sfd;
 	struct btgfw *btgfw;
 
-	config_init(conf_file, cfg_opts);
-
 	if (openfiles_init(configuration.maxfiles) != 0) {
-		fatal("set max open files to %d failed: %s",
+		FATAL("set max open files to %d failed: %s",
 		      configuration.maxfiles, strerror(errno));
 	}
 
 	sfd = listen_and_bind(configuration.local_addr, configuration.local_port);
 	if (sfd < 0) {
-		fatal("listen_and_bind(): %s", strerror(errno));
+		FATAL("listen_and_bind(): %s", strerror(errno));
 	}
 
-	DEBUG("Listening on %d", configuration.local_port);
-
-	crypt_set_iv(configuration.password);
+	INFO("Listening on %d", configuration.local_port);
 
 	btgfw = btgfw_new(sfd, configuration.nthread, accept_cb);
-
-	DEBUG("Server started ...");
-
 	btgfw_loop(btgfw, -1);
 
+	cryptor_deinit(&cryptor);
 	close(sfd);
 	btgfw_free(btgfw);
 

@@ -36,7 +36,7 @@ btgfw_new(int sfd, int nthread, accept_callback accept_cb)
 
 	btgfw->poller = poller_open();
 	if (btgfw->poller < 0) {
-		fatal("cannot open poller: %s", strerror(errno));
+		FATAL("cannot open poller: %s", strerror(errno));
 	}
 
 	btgfw->sfd = sfd;

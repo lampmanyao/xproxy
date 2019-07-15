@@ -42,19 +42,13 @@ set_nonblocking(int fd)
 int
 listen_and_bind(const char *address, int port)
 {
-	if (strcmp("localhost", address) != 0 &&
-	    strcmp("127.0.0.1", address) != 0 &&
-	    strcmp("0.0.0.0",   address) != 0) {
-		fatal("Wrong local address");
-	}
-
 	int lfd;
 	struct sockaddr_in serv_addr;
 	int reuse = 1;
 
 	lfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (lfd == -1) {
-		DEBUG("socket(): %s", strerror(errno));
+		ERROR("socket(): %s", strerror(errno));
 		return -1;
 	}
 	
@@ -67,13 +61,13 @@ listen_and_bind(const char *address, int port)
 	serv_addr.sin_port = htons(port);
 
 	if (bind(lfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == -1) {
-		DEBUG("bind(): %s", strerror(errno));
+		ERROR("bind(): %s", strerror(errno));
 		close(lfd);
 		return -1;
 	}
 
 	if (listen(lfd, BACKLOG) == -1) {
-		DEBUG("listen(): %s", strerror(errno));
+		ERROR("listen(): %s", strerror(errno));
 		close(lfd);
 		return -1;
 	}
@@ -228,7 +222,7 @@ connect_with_timeout(const char *host, int port, int milliseconds)
 			}
 			break;
 		} else {
-			DEBUG("connect to %s:%d error: %s", host, port, strerror(errno));
+			ERROR("connect to %s:%d error: %s", host, port, strerror(errno));
 			close(sock);
 			continue;
 		}

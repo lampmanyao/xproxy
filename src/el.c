@@ -95,7 +95,7 @@ void
 el_run(struct el *el)
 {
 	if (pthread_create(&el->tid, NULL, el_io_thread, el) < 0) {
-		fatal("pthread_create(): %s", strerror(errno));
+		FATAL("pthread_create(): %s", strerror(errno));
 	}
 }
 
