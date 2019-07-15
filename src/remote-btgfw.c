@@ -42,7 +42,7 @@ struct cfgopts cfg_opts[] = {
 	{ "local_port", TYP_INT4, &configuration.local_port, {20086, NULL} },
 	{ "nthread", TYP_INT4, &configuration.nthread, {4, NULL} },
 	{ "maxfiles", TYP_INT4, &configuration.maxfiles, {1024, NULL} },
-	{ "verbose", TYP_INT4, &configuration.verbose, {1, NULL} },
+	{ "verbose", TYP_INT4, &configuration.verbose, {0, NULL} },
 	{ NULL, 0, NULL, {0, NULL} }
 };
 
@@ -60,7 +60,7 @@ accept_cb(struct btgfw *btgfw, int lfd)
 	fd = accept(lfd, (struct sockaddr*)&sock_addr, &addr_len);
 
 	if (fd > 0) {
-		DEBUG("accept incoming from %s:%d with client %d",
+		INFO("accept incoming from %s:%d with client %d",
 		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
 		set_nonblocking(fd);
 		tcp_conn = new_tcp_connection(fd, 8192, recvfrom_client_cb, sendto_client_cb);
@@ -137,8 +137,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			return;
 		}
 
-		if (configuration.verbose)
-			DEBUG("client %d connected to %s with target %d", client->fd, ipv4, fd);
+		INFO("client %d connected to %s with target %d", client->fd, ipv4, fd);
 
 		set_nonblocking(fd);
 		target = new_tcp_connection(fd, 8192, recvfrom_target_cb, sendto_target_cb);
@@ -202,8 +201,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			return;
 		}
 
-		if (configuration.verbose)
-			DEBUG("client %d connected to %s with target %d", client->fd, domain_name, fd);
+		INFO("client %d connected to %s with target %d", client->fd, domain_name, fd);
 
 		set_nonblocking(fd);
 		target = new_tcp_connection(fd, 8192, recvfrom_target_cb, sendto_target_cb);

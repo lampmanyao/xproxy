@@ -63,9 +63,8 @@ accept_cb(struct btgfw *btgfw, int lfd)
 	fd = accept(lfd, (struct sockaddr*)&sock_addr, &addr_len);
 
 	if (fd > 0) {
-		if (configuration.verbose)
-			DEBUG("accept incoming from %s:%d with client %d",
-			      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
+		INFO("accept incoming from %s:%d with client %d",
+		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
 
 		set_nonblocking(fd);
 		tcp_conn = new_tcp_connection(fd, 8192, recvfrom_client_cb, sendto_client_cb);
@@ -189,8 +188,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			return;
 		}
 
-		if (configuration.verbose)
-			DEBUG("client %d connect to remote %d", client->fd, fd);
+		INFO("client %d connected to remote %d", client->fd, fd);
 
 		set_nonblocking(fd);
 		remote = new_tcp_connection(fd, 8192, recvfrom_remote_cb, sendto_remote_cb);
@@ -269,8 +267,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		memcpy(remote->host, domain_name, domain_name_len);
 		remote->host[domain_name_len] = '\0';
 
-		if (configuration.verbose)
-			DEBUG("client %d connect to remote %d. %s", client->fd, fd, remote->host);
+		INFO("client %d connected to remote %d (%s)", client->fd, fd, remote->host);
 
 		remote->peer_tcp_conn = client;
 		client->peer_tcp_conn = remote;
