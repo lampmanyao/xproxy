@@ -27,6 +27,7 @@ Btgfw is socks5 proxy, it consists of local-btgfw and remote-btgfw. local-btgfw 
 - status: `networksetup -getsocksfirewallproxy Wi-Fi`
 
 ## TODOs
+- support proxy auto-config
 - support more cipher-suites
 - support DNS cache
 - support IPv6
