@@ -23,6 +23,7 @@ el_new()
 		oom(sizeof(*el));
 	}
 	el->poller = poller_open();
+	el->tree = rbtree_new();
 	return el;
 }
 
@@ -30,6 +31,7 @@ void
 el_free(struct el *el)
 {
 	poller_close(el->poller);
+	rbtree_free(el->tree);
 	free(el);
 }
 
@@ -37,11 +39,17 @@ void
 el_watch(struct el *el, struct tcp_connection *tcp_conn)
 {
 	poller_add(el->poller, tcp_conn->fd, tcp_conn);
+	struct rbnode *node = rbnode_new(tcp_conn->fd, tcp_conn);
+	rbtree_insert(el->tree, node);
 }
 
 void
 el_stop_watch(struct el *el, struct tcp_connection *tcp_conn)
 {
+	struct rbnode *node = rbtree_search(el->tree, tcp_conn->fd);
+	if (node) {
+		rbtree_delete(el->tree, node);
+	}
 	poller_del(el->poller, tcp_conn->fd, tcp_conn);
 }
 
@@ -56,6 +64,11 @@ el_io_thread(void *arg)
 		for (int i = 0; i < n; ++i) {
 			struct tcp_connection *tcp_conn;
 			tcp_conn = ev[i].ptr;
+			struct rbnode *node = rbtree_search(el->tree, tcp_conn->fd);
+
+			if (!node || (node->value != tcp_conn)) {
+				continue;
+			}
 
 			if (ev[i].read) {
 				tcp_conn->recv_cb(el, tcp_conn);
@@ -65,18 +78,10 @@ el_io_thread(void *arg)
 				tcp_conn->send_cb(el, tcp_conn);
 			}
 
-#if defined(__APPLE__)
 			if (ev[i].error) {
-				int so_error;
-				socklen_t error_len = sizeof(so_error);
-				getsockopt(tcp_conn->fd, SOL_SOCKET, SO_ERROR, 
-					   &so_error, &error_len);
-				ERROR("socket %d error: %s, free client %d",
-				      tcp_conn->fd, strerror(errno), tcp_conn->fd);
 				poller_del(el->poller, tcp_conn->fd, tcp_conn);
 				free_tcp_connection(tcp_conn);
 			}
-#endif
 		}
 
 		if (n == -1) {

@@ -429,8 +429,13 @@ recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 		if (configuration.verbose)
 			DEBUG("client %d (%s) closed", client->fd, client->host);
 
-		client->closed = 1;
-		poller_disable_read(el->poller, client->fd, client);
+		el_stop_watch(el, client);
+		free_tcp_connection(client);
+
+		if (remote) {
+			el_stop_watch(el, remote);
+			free_tcp_connection(remote);
+		}
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			if (configuration.verbose)
