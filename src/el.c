@@ -63,24 +63,30 @@ el_io_thread(void *arg)
 		int n = poller_wait(el->poller, ev, 1024, 1000);
 		for (int i = 0; i < n; ++i) {
 			struct tcp_connection *tcp_conn;
+			struct rbnode *node;
+			int ret;
+
 			tcp_conn = ev[i].ptr;
-			struct rbnode *node = rbtree_search(el->tree, tcp_conn->fd);
+			node = rbtree_search(el->tree, tcp_conn->fd);
 
 			if (!node || (node->value != tcp_conn)) {
 				continue;
 			}
 
 			if (ev[i].read) {
-				tcp_conn->recv_cb(el, tcp_conn);
+				ret = tcp_conn->recv_cb(el, tcp_conn);
 			}
 
 			if (ev[i].write) {
-				tcp_conn->send_cb(el, tcp_conn);
+				if (ret == 0)
+					ret = tcp_conn->send_cb(el, tcp_conn);
 			}
 
 			if (ev[i].error) {
-				poller_del(el->poller, tcp_conn->fd, tcp_conn);
-				free_tcp_connection(tcp_conn);
+				if (ret == 0) {
+					poller_del(el->poller, tcp_conn->fd, tcp_conn);
+					free_tcp_connection(tcp_conn);
+				}
 			}
 		}
 

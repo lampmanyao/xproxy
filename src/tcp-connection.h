@@ -5,8 +5,8 @@
 struct el;
 struct tcp_connection;
 
-typedef void (*recv_callback) (struct el*, struct tcp_connection*);
-typedef void (*send_callback) (struct el*, struct tcp_connection*);
+typedef int (*recv_callback) (struct el*, struct tcp_connection*);
+typedef int (*send_callback) (struct el*, struct tcp_connection*);
 
 struct tcp_connection {
 	int fd;

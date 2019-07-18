@@ -20,10 +20,10 @@
 #include <arpa/inet.h>
 
 static void accept_cb(struct btgfw *btgfw, int lfd);
-static void recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
-static void sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
-static void recvfrom_target_cb(struct el *el, struct tcp_connection *tcp_conn);
-static void sendto_target_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int recvfrom_target_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int sendto_target_cb(struct el *el, struct tcp_connection *tcp_conn);
 
 struct remote_config {
 	char *password;
@@ -75,7 +75,7 @@ accept_cb(struct btgfw *btgfw, int lfd)
 	}
 }
 
-static void
+static int
 client_exchange_host(struct el *el, struct tcp_connection *client)
 {
 	struct tcp_connection *target;
@@ -87,12 +87,12 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 	char *plaintext;
 
 	if (slow(len < 4)) {
-		return;
+		return 0;
 	}
 
 	memcpy((char*)&ciphertext_len, data, 4);
 	if (slow(len < 4 + ciphertext_len)) {
-		return;
+		return 0;
 	}
 
 	plaintext_len = cryptor.decrypt(&cryptor, &plaintext, data + 4, ciphertext_len);
@@ -100,7 +100,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		ERROR("decrypt failed");
 		el_stop_watch(el, client);
 		free_tcp_connection(client);
-		return;
+		return -1;
 	}
 
 	uint8_t ver = plaintext[0];
@@ -122,7 +122,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			free(plaintext);
 			el_stop_watch(el, client);
 			free_tcp_connection(client);
-			return;
+			return -1;
 		}
 
 		memcpy((char*)&nport, plaintext + 8, SOCKS5_PORT_SIZE);
@@ -134,7 +134,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			free(plaintext);
 			el_stop_watch(el, client);
 			free_tcp_connection(client);
-			return;
+			return -1;
 		}
 
 		INFO("client %d connected to %s with target %d", client->fd, ipv4, fd);
@@ -166,7 +166,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			free_tcp_connection(client);
 			el_stop_watch(el, target);
 			free_tcp_connection(target);
-			return;
+			return -1;
 		}
 
 		tcp_connection_rbuf_seek(client, 4 + ciphertext_len);
@@ -198,7 +198,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			free(plaintext);
 			el_stop_watch(el, client);
 			free_tcp_connection(client);
-			return;
+			return -1;
 		}
 
 		INFO("client %d connected to %s with target %d", client->fd, domain_name, fd);
@@ -231,7 +231,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			free_tcp_connection(client);
 			el_stop_watch(el, target);
 			free_tcp_connection(target);
-			return;
+			return -1;
 		}
 
 		tcp_connection_rbuf_seek(client, 4 + ciphertext_len);
@@ -243,10 +243,14 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		goto reply_to_client;
 	} else if (typ == SOCKS5_ATYP_IPv6) {
 		ERROR("unsupport IPv6 yet");
-		return;
+		el_stop_watch(el, client);
+		free_tcp_connection(client);
+		return -1;
 	} else {
 		ERROR("unknown address type: %d", typ);
-		return;
+		el_stop_watch(el, client);
+		free_tcp_connection(client);
+		return -1;
 	}
 
 reply_to_client:
@@ -267,27 +271,30 @@ reply_to_client:
 		if ((size_t)s < sbuf_len) {
 			poller_disable_read(el->poller, target->fd, target);
 			poller_enable_write(el->poller, client->fd, client);
-			return;
+			return 0;
 		}
 	} else if (s == 0) {
 		el_stop_watch(el, client);
 		free_tcp_connection(client);
 		el_stop_watch(el, target);
 		free_tcp_connection(target);
+		return -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			poller_disable_read(el->poller, target->fd, target);
 			poller_enable_write(el->poller, client->fd, client);
+			return 0;
 		} else {
 			el_stop_watch(el, client);
 			free_tcp_connection(client);
 			el_stop_watch(el, target);
 			free_tcp_connection(target);
+			return -1;
 		}
 	}
 }
 
-static void
+static int
 client_stream_to_target(struct el *el, struct tcp_connection *client,
 			struct tcp_connection *target)
 {
@@ -308,12 +315,14 @@ client_stream_to_target(struct el *el, struct tcp_connection *client,
 			poller_disable_read(el->poller, client->fd, client);
 			poller_enable_write(el->poller, target->fd, target);
 		}
+		return 0;
 	} else if (s == 0) {
 		client->peer_tcp_conn = NULL;
 		el_stop_watch(el, client);
 		free_tcp_connection(client);
 		el_stop_watch(el, target);
 		free_tcp_connection(target);
+		return -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			if (configuration.verbose)
@@ -321,6 +330,7 @@ client_stream_to_target(struct el *el, struct tcp_connection *client,
 
 			poller_disable_read(el->poller, client->fd, client);
 			poller_enable_write(el->poller, target->fd, target);
+			return 0;
 		} else {
 			if (configuration.verbose)
 				DEBUG("send() to target %d (%s) error", target->fd, target->host);
@@ -330,13 +340,15 @@ client_stream_to_target(struct el *el, struct tcp_connection *client,
 			free_tcp_connection(client);
 			el_stop_watch(el, target);
 			free_tcp_connection(target);
+			return -1;
 		}
 	}
 }
 
-static void
+static int
 recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 {
+	int ret;
 	struct tcp_connection *target = client->peer_tcp_conn;;
 	size_t need_read;
 	char *rbuf;
@@ -351,14 +363,15 @@ recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 
 		switch (client->stage) {
 		case SOCKS5_STAGE_STREAM:
-			client_stream_to_target(el, client, target);
+			ret = client_stream_to_target(el, client, target);
 			break;
 
 		case SOCKS5_STAGE_EXCHG_METHOD:
-			client_exchange_host(el, client);
+			ret = client_exchange_host(el, client);
 			break;
 
 		default:
+			ret = -1;
 			break;
 		}
 	} else if (r == 0) {
@@ -369,10 +382,12 @@ recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 			el_stop_watch(el, target);
 			free_tcp_connection(target);
 		}
+		ret = -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			if (configuration.verbose)
 				DEBUG("recv() from client %d (%s) eagain", client->fd, client->host);
+			ret = 0;
 		} else {
 			if (configuration.verbose)
 				DEBUG("recv() from client %d (%s) error", client->fd, client->host);
@@ -384,21 +399,21 @@ recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 				el_stop_watch(el, target);
 				free_tcp_connection(target);
 			}
+			ret = -1;
 		}
 	}
+
+	return ret;
 }
 
-static void
+static int
 sendto_client_cb(struct el *el, struct tcp_connection *client)
 {
+	int ret;
 	struct tcp_connection *target = client->peer_tcp_conn;
 	char *sbuf = client->sbuf;
 	size_t sbuf_len = client->sbuf_len;
 	ssize_t s;
-
-	if (sbuf_len <= 0) {
-		return;
-	}
 
 	s = send(client->fd, sbuf, sbuf_len, 0);
 
@@ -408,6 +423,7 @@ sendto_client_cb(struct el *el, struct tcp_connection *client)
 			poller_disable_write(el->poller, client->fd, client);
 			poller_enable_read(el->poller, target->fd, target);
 		}
+		ret = 0;
 	} else if (s == 0) {
 		if (configuration.verbose)
 			DEBUG("send() zero to client %d (%s), closing", client->fd, client->host);
@@ -419,6 +435,7 @@ sendto_client_cb(struct el *el, struct tcp_connection *client)
 			el_stop_watch(el, target);
 			free_tcp_connection(target);
 		}
+		ret = -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			if (configuration.verbose)
@@ -426,6 +443,7 @@ sendto_client_cb(struct el *el, struct tcp_connection *client)
 
 			poller_disable_read(el->poller, target->fd, target);
 			poller_enable_write(el->poller, client->fd, client);
+			ret = 0;
 		} else {
 			if (configuration.verbose)
 				DEBUG("send() to client %d (%s) error", client->fd, client->host);
@@ -437,13 +455,17 @@ sendto_client_cb(struct el *el, struct tcp_connection *client)
 				el_stop_watch(el, target);
 				free_tcp_connection(target);
 			}
+			ret = -1;
 		}
 	}
+
+	return ret;
 }
 
-static void
+static int
 recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 {
+	int ret;
 	struct tcp_connection *client = target->peer_tcp_conn;
 	char *rbuf;
 	size_t need_read;
@@ -475,6 +497,7 @@ recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 				poller_enable_read(el->poller, target->fd, target);
 				poller_disable_write(el->poller, client->fd, client);
 			}
+			ret = 0;
 		} else if (s == 0) {
 			if (configuration.verbose)
 				DEBUG("send() zero to client %d (%s)", client->fd, client->host);
@@ -484,13 +507,16 @@ recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 			free_tcp_connection(target);
 			el_stop_watch(el, client);
 			free_tcp_connection(client);
+			ret = -1;
 		} else {
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				if (configuration.verbose)
-					DEBUG("send() to client %d (%s) eagain. Remaining %zu bytes", client->fd, client->host, sbuf_len);
+					DEBUG("send() to client %d (%s) eagain. Remaining %zu bytes",
+					      client->fd, client->host, sbuf_len);
 
 				poller_disable_read(el->poller, target->fd, target);
 				poller_enable_write(el->poller, client->fd, client);
+				ret = 0;
 			} else {
 				if (configuration.verbose)
 					DEBUG("send() to client %d (%s) error", client->fd, client->host);
@@ -500,6 +526,7 @@ recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 				free_tcp_connection(target);
 				el_stop_watch(el, client);
 				free_tcp_connection(client);
+				ret = -1;
 			}
 		}
 	} else if (r == 0) {
@@ -513,12 +540,14 @@ recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 			el_stop_watch(el, client);
 			free_tcp_connection(client);
 		}
+		ret = -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			if (configuration.verbose)
 				DEBUG("recv() from target %d (%s) eagain", target->fd, target->host);
 
 			poller_enable_read(el->poller, target->fd, target);
+			ret = 0;
 		} else {
 			if (configuration.verbose)
 				DEBUG("recv() from target %d (%s) error", target->fd, target->host);
@@ -530,24 +559,24 @@ recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 				el_stop_watch(el, client);
 				free_tcp_connection(client);
 			}
+			ret = -1;
 		}
 	}
+
+	return ret;
 }
 
-static void
+static int
 sendto_target_cb(struct el *el, struct tcp_connection *target)
 {
+	int ret;
 	struct tcp_connection *client = target->peer_tcp_conn;
 	char *sbuf = target->sbuf;
 	size_t sbuf_len = target->sbuf_len;
 
-	if (sbuf_len <= 0) {
-		return;
-	}
-
 	ssize_t s = send(target->fd, sbuf, sbuf_len, 0);
 
-	if (s > 0) {
+	if (fast(s > 0)) {
 		tcp_connection_sbuf_seek(target, (size_t)s);
 		if ((size_t)s == sbuf_len) {
 			poller_enable_read(el->poller, client->fd, client);
@@ -555,6 +584,7 @@ sendto_target_cb(struct el *el, struct tcp_connection *target)
 		} else {
 			poller_enable_write(el->poller, target->fd, target);
 		}
+		ret = 0;
 	} else if (s == 0) {
 		if (configuration.verbose)
 			DEBUG("send() zero to target %d (%s)", target->fd, target->host);
@@ -566,11 +596,13 @@ sendto_target_cb(struct el *el, struct tcp_connection *target)
 			el_stop_watch(el, client);
 			free_tcp_connection(client);
 		}
+		ret = -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			if (configuration.verbose)
 				DEBUG("send() to target %d (%s) eagain", target->fd, target->host);
 			poller_enable_write(el->poller, target->fd, target);
+			ret = 0;
 		} else {
 			if (configuration.verbose)
 				DEBUG("send() to target %d (%s) error", target->fd, target->host);
@@ -582,8 +614,11 @@ sendto_target_cb(struct el *el, struct tcp_connection *target)
 				el_stop_watch(el, client);
 				free_tcp_connection(client);
 			}
+			ret = -1;
 		}
 	}
+
+	return ret;
 }
 
 static void
