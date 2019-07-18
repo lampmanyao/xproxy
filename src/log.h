@@ -26,8 +26,8 @@
 	gettimeofday(&tv, NULL); \
 	localtime_r(&tv.tv_sec, &tm); \
 	snprintf(time_buff, 32, "%04d-%02d-%02d %02d:%02d:%02d.%06d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)tv.tv_usec); \
-	fprintf(stderr, "%s %s:%u %ld " GREEN_BEGIN "DEBUG " COLOR_RESET fmt "\n", time_buff, __FILE__, __LINE__, (long)threadid(), ##args); \
-	fflush(stderr); \
+	fprintf(stdout, "%s %s:%u %ld " GREEN_BEGIN "DEBUG " COLOR_RESET fmt "\n", time_buff, __FILE__, __LINE__, (long)threadid(), ##args); \
+	fflush(stdout); \
 } while (0)
 
 #define INFO(fmt, args ...) do { \
@@ -37,8 +37,8 @@
 	gettimeofday(&tv, NULL); \
 	localtime_r(&tv.tv_sec, &tm); \
 	snprintf(time_buff, 32, "%04d-%02d-%02d %02d:%02d:%02d.%06d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)tv.tv_usec); \
-	fprintf(stderr, "%s %s:%u %ld " YELLO_BEGIN "INFO " COLOR_RESET fmt "\n", time_buff, __FILE__, __LINE__, (long)threadid(), ##args); \
-	fflush(stderr); \
+	fprintf(stdout, "%s %s:%u %ld " YELLO_BEGIN "INFO " COLOR_RESET fmt "\n", time_buff, __FILE__, __LINE__, (long)threadid(), ##args); \
+	fflush(stdout); \
 } while (0)
 
 
