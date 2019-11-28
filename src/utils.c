@@ -152,10 +152,23 @@ connect_with_timeout(const char *host, int port, int milliseconds)
 			return -1;
 		}
 
-		if (connect(sock, (const struct sockaddr*)&ipv4addr,
-			   sizeof(struct sockaddr)) == 0) {
-			return sock;
+		set_nonblocking(sock);
+
+		connect(sock, (const struct sockaddr*)&ipv4addr, sizeof(struct sockaddr));
+
+		struct pollfd pollfd;
+		pollfd.fd = sock;
+		pollfd.events = POLLIN | POLLOUT;
+
+		if (poll(&pollfd, 1, milliseconds) == 1) {
+			int so_error;
+			socklen_t error_len = sizeof(so_error);
+			getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &error_len);
+			if (so_error == 0) {
+				return sock;
+			}
 		}
+
 		close(sock);
 		return -1;
 	}
@@ -182,51 +195,23 @@ connect_with_timeout(const char *host, int port, int milliseconds)
 
 		set_nonblocking(sock);
 
-		if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
-			break;
-		}
+		connect(sock, rp->ai_addr, rp->ai_addrlen);
+		struct pollfd pollfd;
+		pollfd.fd = sock;
+		pollfd.events = POLLIN | POLLOUT;
 
-		if (errno == EINPROGRESS || errno == EINTR) {
-			struct pollfd pollfd;
-			pollfd.fd = sock;
-			pollfd.events = POLLIN | POLLOUT;
-
-			int nready = poll(&pollfd, 1, milliseconds);
-			if (nready < 0) {
-				DEBUG("poll(): %s. %s:%d",
-				      strerror(errno), host, port);
-				close(sock);
-				continue;
-			}
-
-			if (nready == 0) {
-				DEBUG("poll() timeout: %d milliseconds. %s:%d",
-				      milliseconds, host, port);
-				close(sock);
-				continue;
-			}
-
+		if (poll(&pollfd, 1, milliseconds) == 1) {
 			int so_error;
 			socklen_t error_len = sizeof(so_error);
 
-			if (getsockopt(pollfd.fd, SOL_SOCKET, SO_ERROR,
-				       &so_error, &error_len) < 0) {
-				close(sock);
-				continue;
-			}
+			getsockopt(pollfd.fd, SOL_SOCKET, SO_ERROR, &so_error, &error_len);
 
-			if (so_error != 0) {
-				ERROR("SO_ERROR: %d. %s:%d", so_error, host, port);
-				close(sock);
-				continue;
+			if (so_error == 0) {
+				break;
 			}
 			break;
-		} else {
-			ERROR("connect to %s:%d error: %s", host, port, strerror(errno));
-			close(sock);
-			continue;
 		}
-	} /* EOF for() */
+	}
 
 	freeaddrinfo(result);
 	return (rp == NULL) ? -1 : sock;

@@ -23,7 +23,6 @@ el_new()
 		oom(sizeof(*el));
 	}
 	el->poller = poller_open();
-	el->tree = rbtree_new();
 	return el;
 }
 
@@ -31,7 +30,6 @@ void
 el_free(struct el *el)
 {
 	poller_close(el->poller);
-	rbtree_free(el->tree);
 	free(el);
 }
 
@@ -39,17 +37,11 @@ void
 el_watch(struct el *el, struct tcp_connection *tcp_conn)
 {
 	poller_add(el->poller, tcp_conn->fd, tcp_conn);
-	struct rbnode *node = rbnode_new(tcp_conn->fd, tcp_conn);
-	rbtree_insert(el->tree, node);
 }
 
 void
 el_stop_watch(struct el *el, struct tcp_connection *tcp_conn)
 {
-	struct rbnode *node = rbtree_search(el->tree, tcp_conn->fd);
-	if (node) {
-		rbtree_delete(el->tree, node);
-	}
 	poller_del(el->poller, tcp_conn->fd, tcp_conn);
 }
 
@@ -63,29 +55,38 @@ el_io_thread(void *arg)
 		int n = poller_wait(el->poller, ev, 1024, 1000);
 		for (int i = 0; i < n; ++i) {
 			struct tcp_connection *tcp_conn;
-			struct rbnode *node;
-			int ret;
+			struct tcp_connection *peer;
 
 			tcp_conn = ev[i].ptr;
-			node = rbtree_search(el->tree, tcp_conn->fd);
-
-			if (!node || (node->value != tcp_conn)) {
-				continue;
-			}
+			peer = tcp_conn->peer_tcp_conn;
 
 			if (ev[i].read) {
-				ret = tcp_conn->recv_cb(el, tcp_conn);
+				if (tcp_conn->recv_cb(el, tcp_conn) == -1) {
+					el_stop_watch(el, tcp_conn);
+					free_tcp_connection(tcp_conn);
+					if (peer) {
+						peer->peer_tcp_conn = NULL;
+					}
+					continue;
+				}
 			}
 
 			if (ev[i].write) {
-				if (ret == 0)
-					ret = tcp_conn->send_cb(el, tcp_conn);
+				if (tcp_conn->send_cb(el, tcp_conn) == -1) {
+					el_stop_watch(el, tcp_conn);
+					free_tcp_connection(tcp_conn);
+					if (peer) {
+						peer->peer_tcp_conn = NULL;
+					}
+					continue;
+				}
 			}
 
 			if (ev[i].error) {
-				if (ret == 0) {
-					poller_del(el->poller, tcp_conn->fd, tcp_conn);
-					free_tcp_connection(tcp_conn);
+				el_stop_watch(el, tcp_conn);
+				free_tcp_connection(tcp_conn);
+				if (peer) {
+					peer->peer_tcp_conn = NULL;
 				}
 			}
 		}

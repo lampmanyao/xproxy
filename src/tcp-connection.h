@@ -14,14 +14,16 @@ struct tcp_connection {
 	int closed;
 	char host[256];
 
+	/* read buffer */
+	char *rbuf;
 	size_t rbuf_size;
 	size_t rbuf_seek;
 	size_t rbuf_len;
-	char *rbuf;
 
+	/* send buffer */
+	char *sbuf;
 	size_t sbuf_size;
 	size_t sbuf_len;
-	char *sbuf;
 
 	recv_callback recv_cb;
 	send_callback send_cb;

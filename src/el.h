@@ -1,6 +1,5 @@
 #pragma once
 
-#include "rbtree.h"
 #include <pthread.h>
 
 struct tcp_connection;
@@ -8,7 +7,6 @@ struct tcp_connection;
 struct el {
 	int poller;
 	pthread_t tid;
-	struct rbtree *tree;
 };
 
 struct el *el_new();

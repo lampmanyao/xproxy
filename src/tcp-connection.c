@@ -27,15 +27,16 @@ new_tcp_connection(int fd, size_t bufsize, recv_callback recv_cb, send_callback 
 	tcp_conn->closed = 0;
 	memset(tcp_conn->host, 0, 256);
 
-	tcp_conn->rbuf_size = bufsize;
-	tcp_conn->rbuf_len = 0;
 	tcp_conn->rbuf = malloc(bufsize);
 	memset(tcp_conn->rbuf, 0, bufsize);
+	tcp_conn->rbuf_size = bufsize;
+	tcp_conn->rbuf_seek = 0;
+	tcp_conn->rbuf_len = 0;
 
-	tcp_conn->sbuf_size = bufsize;
-	tcp_conn->sbuf_len = 0;
 	tcp_conn->sbuf = malloc(bufsize);
 	memset(tcp_conn->sbuf, 0, bufsize);
+	tcp_conn->sbuf_size = bufsize;
+	tcp_conn->sbuf_len = 0;
 
 	tcp_conn->recv_cb = recv_cb;
 	tcp_conn->send_cb = send_cb;

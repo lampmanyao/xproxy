@@ -32,7 +32,7 @@ else
   cflags += -O2
 endif
 
-srcs = btgfw.c el.c config.c tcp-connection.c crypt.c utils.c rbtree.c
+srcs = btgfw.c el.c config.c tcp-connection.c crypt.c utils.c
 
 objs = $(srcs:.c=.o)
 
