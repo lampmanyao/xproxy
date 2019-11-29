@@ -3,7 +3,7 @@
 #include "el.h"
 #include "tcp-connection.h"
 #include "log.h"
-#include "config.h"
+#include "cfg.h"
 #include "poller.h"
 #include "crypt.h"
 #include "utils.h"
@@ -569,7 +569,7 @@ int main(int argc, char **argv)
 
 	const char *conf_file;
 
-	config_load_defaults(cfg_opts);
+	cfg_load_defaults(cfg_opts);
 
 	while ((ch = getopt(argc, argv, "b:l:k:e:t:m:c:vVh")) != -1) {
 		switch (ch) {
@@ -636,7 +636,7 @@ int main(int argc, char **argv)
 
 	/* We load the config file first. */
 	if (cflag) {
-		config_load_file(conf_file, cfg_opts);
+		cfg_load_file(conf_file, cfg_opts);
 	} else {
 		if (!bflag || !lflag || !kflag) {
 			usage();

@@ -3,7 +3,7 @@
 #include "el.h"
 #include "tcp-connection.h"
 #include "log.h"
-#include "config.h"
+#include "cfg.h"
 #include "poller.h"
 #include "crypt.h"
 #include "utils.h"
@@ -77,7 +77,7 @@ accept_cb(struct btgfw *btgfw, int lfd)
 }
 
 static int
-client_exchange_method(struct el *el, struct tcp_connection *client)
+client_exchange_method(struct tcp_connection *client)
 {
 	char *data = client->rbuf;
 	size_t dlen = client->rbuf_len;
@@ -375,7 +375,7 @@ recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 
 		switch (client->stage) {
 		case SOCKS5_STAGE_EXCHG_METHOD:
-			ret = client_exchange_method(el, client);
+			ret = client_exchange_method(client);
 			break;
 	
 		case SOCKS5_STAGE_EXCHG_HOST:
@@ -747,7 +747,7 @@ int main(int argc, char **argv)
 
 	const char *conf_file;
 
-	config_load_defaults(cfg_opts);
+	cfg_load_defaults(cfg_opts);
 
 	while ((ch = getopt(argc, argv, "b:l:r:p:k:e:t:m:c:vVh")) != -1) {
 		switch (ch) {
@@ -824,7 +824,7 @@ int main(int argc, char **argv)
 
 	/*  We load the config file first. */
 	if (cflag) {
-		config_load_file(conf_file, cfg_opts);
+		cfg_load_file(conf_file, cfg_opts);
 	} else {
 		if (!bflag || !lflag || !rflag || !pflag || !kflag) {
 			usage();

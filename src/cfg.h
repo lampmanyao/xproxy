@@ -12,6 +12,6 @@ struct cfgopts {
 	struct defval defval;
 };
 
-int config_load_file(const char *configfile, struct cfgopts config_options[]);
-void config_load_defaults(struct cfgopts config_options[]);
+int cfg_load_file(const char *configfile, struct cfgopts config_options[]);
+void cfg_load_defaults(struct cfgopts config_options[]);
 

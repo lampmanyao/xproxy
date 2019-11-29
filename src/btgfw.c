@@ -3,6 +3,7 @@
 #include "tcp-connection.h"
 #include "poller.h"
 #include "log.h"
+#include "config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,16 +14,12 @@
 #include <string.h>
 #include <strings.h>
 
-#ifdef JEMALLOC
-#include <jemalloc/jemalloc.h>
-#endif
-
 #define CPUID_MASK 127
 
 const char *
 btgfw_version(void)
 {
-	return BTGFW_MAJOR "." BTGFW_MINOR "." BTGFW_REVISION;
+	return VERSION;
 }
 
 struct btgfw *

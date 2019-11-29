@@ -1,4 +1,4 @@
-#include "config.h"
+#include "cfg.h"
 #include "utils.h"
 #include "log.h"
 
@@ -8,7 +8,7 @@
 #include <string.h>
 
 void
-config_load_defaults(struct cfgopts config_options[])
+cfg_load_defaults(struct cfgopts config_options[])
 {
 	int i;
 	void *ptr;
@@ -32,7 +32,7 @@ config_load_defaults(struct cfgopts config_options[])
 }
 
 int
-config_load_file(const char *configfile, struct cfgopts config_options[])
+cfg_load_file(const char *configfile, struct cfgopts config_options[])
 {
 	char buff[1024];
 	char *ptr;

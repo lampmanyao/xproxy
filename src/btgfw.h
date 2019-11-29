@@ -4,10 +4,6 @@
 
 #include "el.h"
 
-#define BTGFW_MAJOR "0"
-#define BTGFW_MINOR "5"
-#define BTGFW_REVISION "2"
-
 struct btgfw;
 
 typedef void (*accept_callback) (struct btgfw *btgfw, int lfd);

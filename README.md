@@ -17,8 +17,10 @@ Btgfw is socks5 proxy, it consists of local-btgfw and remote-btgfw. local-btgfw 
 
 ## Build from source
 1. git clone https://github.com/lampmanyao/btgfw.git
-2. cd src
-3. make
+2. cd btgfw
+3. ./autogen.sh
+4. ./configure
+5. make
 
 ## System socks5 proxy setup
 ### Mac
