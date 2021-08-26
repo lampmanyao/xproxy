@@ -47,7 +47,7 @@ AS_HELP_STRING([--enable-debug=yes|no], [enable or disable debugging, default is
 
 AM_CONDITIONAL(DEBUG, test x"$debug" = x"yes")
 AS_IF([test x"$debug" = x"yes"],
-      [CFLAGS="-g3 -O0"],
+      [CFLAGS="-g3 -O0 -fsanitize=address"],
       [CFLAGS="-O2"])
 
 AC_ARG_ENABLE([static],

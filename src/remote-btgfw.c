@@ -1,13 +1,3 @@
-#include "btgfw.h"
-#include "socks5.h"
-#include "el.h"
-#include "tcp-connection.h"
-#include "log.h"
-#include "cfg.h"
-#include "poller.h"
-#include "crypt.h"
-#include "utils.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -19,11 +9,23 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include "btgfw.h"
+#include "socks5.h"
+#include "el.h"
+#include "tcp-connection.h"
+#include "log.h"
+#include "cfg.h"
+#include "poller.h"
+#include "crypt.h"
+#include "utils.h"
+
 static void accept_cb(struct btgfw *btgfw, int lfd);
 static int recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int recvfrom_target_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int sendto_target_cb(struct el *el, struct tcp_connection *tcp_conn);
+
+static struct cryptor cryptor;
 
 struct remote_config {
 	char *password;
@@ -37,7 +39,7 @@ struct remote_config {
 
 struct cfgopts cfg_opts[] = {
 	{ "password", TYP_STRING, &configuration.password, {0, "helloworld"} },
-	{ "method", TYP_STRING, &configuration.method, {0, "ase-256-cfb"} },
+	{ "method", TYP_STRING, &configuration.method, {0, "aes-256-cfb"} },
 	{ "local_addr", TYP_STRING, &configuration.local_addr, {0, "0.0.0.0"} },
 	{ "local_port", TYP_INT4, &configuration.local_port, {20086, NULL} },
 	{ "nthread", TYP_INT4, &configuration.nthread, {4, NULL} },
@@ -46,10 +48,7 @@ struct cfgopts cfg_opts[] = {
 	{ NULL, 0, NULL, {0, NULL} }
 };
 
-static struct cryptor cryptor;
-
-static void
-accept_cb(struct btgfw *btgfw, int lfd)
+static void accept_cb(struct btgfw *btgfw, int lfd)
 {
 	int fd;
 	struct tcp_connection *tcp_conn;
@@ -63,39 +62,31 @@ accept_cb(struct btgfw *btgfw, int lfd)
 		INFO("accept incoming from %s:%d with client %d",
 		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
 		set_nonblocking(fd);
-		tcp_conn = new_tcp_connection(fd, 8192, recvfrom_client_cb, sendto_client_cb);
+		tcp_conn = new_tcp_connection(fd, 4096, recvfrom_client_cb, sendto_client_cb);
 		el_watch(btgfw->els[fd % btgfw->nthread], tcp_conn);
 	} else {
-		if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
-			return;
-		} else {
-			ERROR("accept(): %s", strerror(errno));
-			return;
-		}
+		return;
 	}
 }
 
-static int
-client_exchange_host(struct el *el, struct tcp_connection *client)
+static int client_exchange_host(struct el *el, struct tcp_connection *client)
 {
 	struct tcp_connection *target;
-	char *data = client->rbuf;
-	size_t len = client->rbuf_len;
+	char *data = client->rxbuf;
+	size_t len = client->rxbuf_length;
 
 	unsigned int ciphertext_len;
 	int plaintext_len;
-	char *plaintext;
+	uint8_t *plaintext;
 
-	if (slow(len < 4)) {
+	if (slow(len < 4))
 		return 0;
-	}
 
 	memcpy((char*)&ciphertext_len, data, 4);
-	if (slow(len < 4 + ciphertext_len)) {
+	if (slow(len < 4 + ciphertext_len))
 		return 0;
-	}
 
-	plaintext_len = cryptor.decrypt(&cryptor, &plaintext, data + 4, ciphertext_len);
+	plaintext_len = cryptor.decrypt(&cryptor, (char**)&plaintext, data + 4, ciphertext_len);
 	if (slow(plaintext_len < 0)) {
 		ERROR("decrypt failed");
 		return -1;
@@ -106,8 +97,11 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 	uint8_t rsv = plaintext[2];
 	uint8_t typ = plaintext[3];
 
+	SHUTUP_WARNING(cmd);
+	SHUTUP_WARNING(rsv);
+
 	if (typ == SOCKS5_ATYP_IPv4) {
-		char reply[256];
+		uint8_t reply[256];
 		char ipv4[32];
 		uint16_t nport;
 		uint16_t hsport;
@@ -131,11 +125,14 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			return -1;
 		}
 
-		INFO("client %d connected to %s with target %d", client->fd, ipv4, fd);
-
 		set_nonblocking(fd);
-		target = new_tcp_connection(fd, 8192, recvfrom_target_cb, sendto_target_cb);
+		target = new_tcp_connection(fd, 4096, recvfrom_target_cb, sendto_target_cb);
 		el_watch(el, target);
+
+		INFO("client %d connected to %s with target %d", client->fd, ipv4, target->fd);
+
+		target->peer_tcp_conn = client;
+		client->peer_tcp_conn = target;
 
 		memcpy(client->host, ipv4, sizeof(ipv4));
 		client->host[sizeof(ipv4)] = '\0';
@@ -150,7 +147,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		memcpy(reply + 4 + 4, (char*)&nport, SOCKS5_PORT_SIZE);
 
 		cipher_reply_len = cryptor.encrypt(&cryptor, &cipher_reply,
-						   reply,
+						   (char *)reply,
 						   SOCKS5_IPV4_REQ_SIZE);
 
 		if (slow(cipher_reply_len < 0)) {
@@ -159,10 +156,10 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			return -1;
 		}
 
-		tcp_connection_rbuf_seek(client, 4 + ciphertext_len);
+		tcp_connection_reset_rxbuf(client);
 
-		tcp_connection_sbuf_append(client, (char*)&cipher_reply_len, 4);
-		tcp_connection_sbuf_append(client, cipher_reply, (size_t)cipher_reply_len);
+		tcp_connection_append_txbuf(client, (char*)&cipher_reply_len, 4);
+		tcp_connection_append_txbuf(client, cipher_reply, (size_t)cipher_reply_len);
 		free(cipher_reply);
 
 		goto reply_to_client;
@@ -172,7 +169,7 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		uint16_t nport;
 		uint16_t hsport;
 		int fd;
-		char reply[256];
+		uint8_t reply[256];
 		char *cipher_reply;
 		int cipher_reply_len;
 
@@ -190,11 +187,14 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 			return -1;
 		}
 
-		INFO("client %d connected to %s with target %d", client->fd, domain_name, fd);
-
 		set_nonblocking(fd);
-		target = new_tcp_connection(fd, 8192, recvfrom_target_cb, sendto_target_cb);
+		target = new_tcp_connection(fd, 4096, recvfrom_target_cb, sendto_target_cb);
 		el_watch(el, target);
+
+		client->peer_tcp_conn = target;
+		target->peer_tcp_conn = client;
+
+		INFO("client %d connected to %s with target %d", client->fd, domain_name, client->peer_tcp_conn->fd);
 
 		memcpy(client->host, domain_name, domain_name_len);
 		client->host[domain_name_len] = '\0';
@@ -210,52 +210,40 @@ client_exchange_host(struct el *el, struct tcp_connection *client)
 		memcpy(reply + 5 + domain_name_len, (char*)&nport, SOCKS5_PORT_SIZE);
 
 		cipher_reply_len = cryptor.encrypt(&cryptor, &cipher_reply,
-						   reply,
+						   (char *)reply,
 						   5 + domain_name_len + SOCKS5_PORT_SIZE);
 
 		if (cipher_reply_len < 0) {
-			ERROR("encrypt failed");
+			ERROR("Encryption failure.");
 			free(plaintext);
 			return -1;
 		}
 
-		tcp_connection_rbuf_seek(client, 4 + ciphertext_len);
+		tcp_connection_reset_rxbuf(client);
 
-		tcp_connection_sbuf_append(client, (char*)&cipher_reply_len, 4);
-		tcp_connection_sbuf_append(client, cipher_reply, (size_t)cipher_reply_len);
+		tcp_connection_append_txbuf(client, (char*)&cipher_reply_len, 4);
+		tcp_connection_append_txbuf(client, cipher_reply, (size_t)cipher_reply_len);
 		free(cipher_reply);
 
 		goto reply_to_client;
 	} else if (typ == SOCKS5_ATYP_IPv6) {
-		ERROR("unsupport IPv6 yet");
+		ERROR("Unsupport IPv6 yet.");
 		return -1;
 	} else {
-		ERROR("unknown address type: %d", typ);
+		ERROR("Unknown address type: %d.", typ);
 		return -1;
 	}
 
 reply_to_client:
 	free(plaintext);
 
-	char *sbuf = client->sbuf;
-	size_t sbuf_len = client->sbuf_len;
-	ssize_t s = send(client->fd, sbuf, sbuf_len, 0);
+	ssize_t tx = send(client->fd, client->txbuf, client->txbuf_length, 0);
 
-	if (fast(s > 0)) {
-		tcp_connection_sbuf_seek(client, (size_t)s);
-		client->peer_tcp_conn = target;
+	if (fast(tx > 0)) {
+		tcp_connection_reset_txbuf(client);
 		client->stage = SOCKS5_STAGE_STREAM;
-
-		target->peer_tcp_conn = client;
 		target->stage = SOCKS5_STAGE_STREAM;
-
-		if ((size_t)s < sbuf_len) {
-			poller_disable_read(el->poller, target->fd, target);
-			poller_enable_write(el->poller, client->fd, client);
-		}
 		return 0;
-	} else if (s == 0) {
-		return -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			poller_disable_read(el->poller, target->fd, target);
@@ -267,293 +255,218 @@ reply_to_client:
 	}
 }
 
-static int
-client_stream_to_target(struct el *el, struct tcp_connection *client)
+static int client_stream_to_target(struct el *el, struct tcp_connection *client)
 {
 	struct tcp_connection *target = client->peer_tcp_conn;;
-	if (slow(!target)) {
+	char *data = NULL;
+	size_t data_len = 0;
+	int ciphertext_len = 0;
+	int plaintext_len = 0;
+	char *plaintext = NULL;
+	ssize_t tx = 0;
+
+try_again:
+	data = client->rxbuf;
+	data_len = client->rxbuf_length;
+
+	if (slow(data_len < 4))
+		return 0;
+
+	memcpy((char *)&ciphertext_len, data, 4);
+
+	if (slow(data_len < 4 + (size_t)ciphertext_len))
+		return 0;
+
+	plaintext_len = cryptor.decrypt(&cryptor, &plaintext, data + 4, (unsigned int)ciphertext_len);
+
+	if (plaintext_len < 0) {
+		ERROR("Decryption failure.");
 		return -1;
 	}
 
-	char *data = client->rbuf;
-	size_t dlen = client->rbuf_len;
+	tcp_connection_append_txbuf(target, plaintext, (size_t)plaintext_len);
+	free(plaintext);
 
-	tcp_connection_sbuf_append(target, data, dlen);
-	tcp_connection_rbuf_seek(client, dlen);
+	if (data_len == 4 + (size_t)ciphertext_len) {
+		tcp_connection_reset_rxbuf(client);
+	} else {
+		tcp_connection_move_rxbuf(client, 4 + (size_t)ciphertext_len);
+	}
 
-	char *sbuf = target->sbuf;
-	size_t sbuf_len = target->sbuf_len;
+	tx = send(target->fd, target->txbuf, target->txbuf_length, 0);
 
-	ssize_t s = send(target->fd, sbuf, sbuf_len, 0);
-
-	if (fast(s > 0)) {
-		tcp_connection_sbuf_seek(target, (size_t)s);
-		if ((size_t)s < sbuf_len) {
+	if (fast(tx > 0)) {
+		if ((size_t)tx == target->txbuf_length) {
+			tcp_connection_reset_txbuf(target);
+			goto try_again;
+		} else {
 			poller_disable_read(el->poller, client->fd, client);
 			poller_enable_write(el->poller, target->fd, target);
+			tcp_connection_move_txbuf(target, (size_t)tx);
 		}
 		return 0;
-	} else if (s == 0) {
-		return -1;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			if (configuration.verbose) {
-				DEBUG("send() busy");
-			}
-
 			poller_disable_read(el->poller, client->fd, client);
 			poller_enable_write(el->poller, target->fd, target);
 			return 0;
 		} else {
-			if (configuration.verbose) {
-				ERROR("send() error: %s", strerror(errno));
-			}
-
 			return -1;
 		}
 	}
 }
 
-static int
-recvfrom_client_cb(struct el *el, struct tcp_connection *client)
+static int recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 {
-	int ret;
-	size_t need_read;
-	char *rbuf;
-	ssize_t r = 0;
-
-	need_read = client->rbuf_size - client->rbuf_len;
-	rbuf = client->rbuf + client->rbuf_len;
-	r = recv(client->fd, rbuf, need_read, 0);
-
-	if (fast(r > 0)) {
-		client->rbuf_len += (size_t)r;
-
-		switch (client->stage) {
-		case SOCKS5_STAGE_EXCHG_METHOD:
-			ret = client_exchange_host(el, client);
-			break;
-
-		case SOCKS5_STAGE_STREAM:
-			ret = client_stream_to_target(el, client);
-			break;	
-
-		default:
-			ret = -1;
-			break;
-		}
-	} else if (r == 0) {
-		ret = -1;
-	} else {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			if (configuration.verbose) {
-				DEBUG("recv() busy");
+	int ret = -1;
+	while (1) {
+		char buf[4096];
+		ssize_t rx = recv(client->fd, buf, sizeof(buf), 0);
+		if (fast(rx > 0)) {
+			tcp_connection_append_rxbuf(client, buf, (size_t)rx);
+		} else if (rx < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				break;
+			} else {
+				break;
 			}
-			ret = 0;
 		} else {
-			if (configuration.verbose) {
-				ERROR("recv() error: %s", strerror(errno));
-			}
-			ret = -1;
+			break;
 		}
+	}
+
+
+	if (slow(client->rxbuf_length == 0))
+		return -1;
+
+	switch (client->stage) {
+	case SOCKS5_STAGE_EXCHG_METHOD:
+		ret = client_exchange_host(el, client);
+		break;
+
+	case SOCKS5_STAGE_STREAM:
+		ret = client_stream_to_target(el, client);
+		break;
+
+	default:
+		ret = -1;
+		break;
 	}
 
 	return ret;
 }
 
-static int
-sendto_client_cb(struct el *el, struct tcp_connection *client)
+static int sendto_client_cb(struct el *el, struct tcp_connection *client)
 {
-	int ret;
 	struct tcp_connection *target = client->peer_tcp_conn;
-	char *sbuf = client->sbuf;
-	size_t sbuf_len = client->sbuf_len;
-	ssize_t s;
+	ssize_t tx = send(client->fd, client->txbuf, client->txbuf_length, 0);
 
-	s = send(client->fd, sbuf, sbuf_len, 0);
-
-	if (fast(s > 0)) {
-		tcp_connection_sbuf_seek(client, (size_t)s);
-		if ((size_t)s == sbuf_len) {
-			poller_disable_write(el->poller, client->fd, client);
+	if (fast(tx > 0)) {
+		if ((size_t)tx == client->txbuf_length) {
+			tcp_connection_reset_txbuf(client);
 			poller_enable_read(el->poller, target->fd, target);
+			poller_disable_write(el->poller, client->fd, client);
+		} else {
+			tcp_connection_move_txbuf(client, (size_t)tx);
 		}
-		ret = 0;
-	} else if (s == 0) {
-		if (configuration.verbose) {
-			ERROR("send() error: %s", strerror(errno));
-		}
-
-		ret = -1;
+		return 0;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			if (configuration.verbose) {
-				DEBUG("send() busy");
-			}
-
-			poller_disable_read(el->poller, target->fd, target);
-			poller_enable_write(el->poller, client->fd, client);
-			ret = 0;
+			return 0;
 		} else {
-			if (configuration.verbose) {
-				ERROR("send() error: %s", strerror(errno));
-			}
-
-			ret = -1;
+			return -1;
 		}
 	}
-
-	return ret;
 }
 
-static int
-recvfrom_target_cb(struct el *el, struct tcp_connection *target)
+static int recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 {
 	struct tcp_connection *client = target->peer_tcp_conn;
 
-	if (slow(!client)) {
+	while (1) {
+		char buf[4096];
+		ssize_t rx = recv(target->fd, buf, sizeof(buf), 0);
+		if (fast(rx > 0)) {
+			tcp_connection_append_rxbuf(target, buf, (size_t)rx);
+		} else if (rx < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				break;
+			} else {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+
+	if (slow(target->rxbuf_length == 0))
+		return -1;
+
+	char *ciphertext;
+	int ciphertext_len;
+	ciphertext_len = cryptor.encrypt(&cryptor, &ciphertext,
+					 target->rxbuf, (unsigned int)target->rxbuf_length);
+
+	if (ciphertext_len < 0) {
+		ERROR("Encryption failure.");
 		return -1;
 	}
 
-	int ret;
-	char *rbuf;
-	size_t need_read;
-	ssize_t r = 0;
+	tcp_connection_append_txbuf(client, (char *)&ciphertext_len, 4);
+	tcp_connection_append_txbuf(client, ciphertext, (size_t)ciphertext_len);
+	tcp_connection_reset_rxbuf(target);
+	free(ciphertext);
 
-	rbuf = target->rbuf + target->rbuf_len;
-	need_read = target->rbuf_size - target->rbuf_len;
-	r = recv(target->fd, rbuf, need_read, 0);
+	ssize_t tx = send(client->fd, client->txbuf, client->txbuf_length, 0);
 
-	if (fast(r > 0)) {
-		target->rbuf_len += (size_t)r;
-
-		char *data = target->rbuf;
-		size_t len = target->rbuf_len;
-
-		tcp_connection_sbuf_append(client, data, len);
-		tcp_connection_rbuf_seek(target, len);
-
-		char *sbuf = client->sbuf;
-		size_t sbuf_len = client->sbuf_len;
-		ssize_t s = send(client->fd, sbuf, sbuf_len, 0);
-
-		if (fast(s > 0)) {
-			tcp_connection_sbuf_seek(client, (size_t)s);
-			if ((size_t)s < sbuf_len) {
-				poller_disable_read(el->poller, target->fd, target);
-				poller_enable_write(el->poller, client->fd, client);
-			} else {
-				poller_enable_read(el->poller, target->fd, target);
-				poller_disable_write(el->poller, client->fd, client);
-			}
-			ret = 0;
-		} else if (s == 0) {
-			if (configuration.verbose) {
-				ERROR("send() error: %s", strerror(errno));
-			}
-
-			ret = -1;
+	if (fast(tx > 0)) {
+		if ((size_t)tx == client->txbuf_length) {
+			tcp_connection_reset_txbuf(client);
 		} else {
-			if (errno == EAGAIN || errno == EWOULDBLOCK) {
-				if (configuration.verbose) {
-					DEBUG("send() busy");
-				}
-
-				poller_disable_read(el->poller, target->fd, target);
-				poller_enable_write(el->poller, client->fd, client);
-				ret = 0;
-			} else {
-				if (configuration.verbose) {
-					ERROR("send() error: %s", strerror(errno));
-				}
-
-				ret = -1;
-			}
+			poller_disable_read(el->poller, target->fd, target);
+			poller_enable_write(el->poller, client->fd, client);
+			tcp_connection_move_txbuf(client, (size_t)tx);
 		}
-	} else if (r == 0) {
-		if (configuration.verbose) {
-			ERROR("recv() error: %s", strerror(errno));
-		}
-
-		ret = -1;
+		return 0;
 	} else {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			if (configuration.verbose) {
-				DEBUG("recv() busy");
-			}
-
-			poller_enable_read(el->poller, target->fd, target);
-			ret = 0;
-		} else {
-			if (configuration.verbose) {
-				ERROR("recv() error: %s", strerror(errno));
-			}
-
-			ret = -1;
-		}
+		return -1;
 	}
-
-	return ret;
 }
 
-static int
-sendto_target_cb(struct el *el, struct tcp_connection *target)
+static int sendto_target_cb(struct el *el, struct tcp_connection *target)
 {
-	int ret;
 	struct tcp_connection *client = target->peer_tcp_conn;
-	char *sbuf = target->sbuf;
-	size_t sbuf_len = target->sbuf_len;
+	ssize_t tx = send(target->fd, target->txbuf, target->txbuf_length, 0);
 
-	ssize_t s = send(target->fd, sbuf, sbuf_len, 0);
-
-	if (fast(s > 0)) {
-		tcp_connection_sbuf_seek(target, (size_t)s);
-		if ((size_t)s == sbuf_len) {
+	if (fast(tx > 0)) {
+		if ((size_t)tx == target->txbuf_length) {
 			poller_enable_read(el->poller, client->fd, client);
-			poller_disable_write(el->poller, target->fd, target);
+			tcp_connection_reset_txbuf(target);
 		} else {
-			poller_enable_write(el->poller, target->fd, target);
+			tcp_connection_move_txbuf(target, (size_t)tx);
 		}
-		ret = 0;
-	} else if (s == 0) {
-		if (configuration.verbose) {
-			ERROR("send() error: %s", strerror(errno));
-		}
-
-		ret = -1;
+		return 0;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			if (configuration.verbose) {
-				DEBUG("send() busy");
-			}
-			poller_enable_write(el->poller, target->fd, target);
-			ret = 0;
+			return 0;
 		} else {
-			if (configuration.verbose) {
-				ERROR("send() error: %s", strerror(errno));
-			}
-
-			ret = -1;
+			return -1;
 		}
 	}
-
-	return ret;
 }
 
-static void
-usage(void)
-{
-	printf("usage:\n");
+static void usage(void) {
+	printf("Usage:\n");
 	printf("    remote-btgfw\n");
+	printf("        -c <config>           Use configure file to start.\n");
 	printf("        -b <local-address>    Local address to bind: 127.0.0.1 or 0.0.0.0.\n");
 	printf("        -l <local-port>       Port number for listen.\n");
 	printf("        -k <password>         Password.\n");
 	printf("        [-e <method>]         Cipher suite: aes-128-cfb, aes-192-cfb, aes-256-cfb.\n");
-	printf("        [-t <nthread>         I/O thread number. Default value is 8.\n");
-	printf("        [-m <max-open-files>  Max open files number. Default value is 1024.\n");
-	printf("        [-v]                  Verbose mode.\n");
-	printf("        [-V]                  Version. Print version info.\n");
-	printf("        [-h]                  Help. Print this usage.\n");
+	printf("        [-t <nthread>         I/O thread number. Defaults to 8.\n");
+	printf("        [-m <max-open-files>  Max open files number. Defaults to 1024.\n");
+	printf("        [-v]                  Print version and quit.\n");
+	printf("        [-h]                  Print this message and quit.\n");
 	exit(-1);
 }
 
@@ -563,7 +476,7 @@ int main(int argc, char **argv)
 	int bflag = 0;
 	int lflag = 0;
 	int kflag = 0;
-	int Vflag = 0;  /* version */
+	int vflag = 0;  /* version */
 	int cflag = 0;
 	int hflag = 0;
 
@@ -601,11 +514,7 @@ int main(int argc, char **argv)
 			break;
 
 		case 'v':
-			configuration.verbose = 1;
-			break;
-
-		case 'V':
-			Vflag = 1;
+			vflag = 1;
 			break;
 
 		case 'c':
@@ -626,21 +535,18 @@ int main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (Vflag) {
+	if (vflag)
 		printf("\nbtgfw version: %s\n\n", btgfw_version());
-	}
 
-	if (hflag) {
+	if (hflag)
 		usage();
-	}
 
 	/* We load the config file first. */
 	if (cflag) {
 		cfg_load_file(conf_file, cfg_opts);
 	} else {
-		if (!bflag || !lflag || !kflag) {
+		if (!bflag || !lflag || !kflag)
 			usage();
-		}
 	}
 
 	signals_init();
@@ -648,7 +554,7 @@ int main(int argc, char **argv)
 	crypt_setup();
 
 	if (cryptor_init(&cryptor, configuration.method, configuration.password) == -1) {
-		ERROR("unsupport method: %s", configuration.method);
+		ERROR("Unsupport method: %s.", configuration.method);
 		return -1;
 	}
 
@@ -656,7 +562,7 @@ int main(int argc, char **argv)
 	struct btgfw *btgfw;
 
 	if (openfiles_init(configuration.maxfiles) != 0) {
-		FATAL("set max open files to %d failed: %s",
+		FATAL("Set max open files to %d failed: %s.",
 		      configuration.maxfiles, strerror(errno));
 	}
 
@@ -665,7 +571,7 @@ int main(int argc, char **argv)
 		FATAL("listen_and_bind(): %s", strerror(errno));
 	}
 
-	INFO("Listening on %d ...", configuration.local_port);
+	INFO("Listening on port %d.", configuration.local_port);
 
 	btgfw = btgfw_new(sfd, configuration.nthread, accept_cb);
 	btgfw_loop(btgfw, 1000);
@@ -673,6 +579,7 @@ int main(int argc, char **argv)
 	cryptor_deinit(&cryptor);
 	close(sfd);
 	btgfw_free(btgfw);
+	crypt_cleanup();
 
         return 0;
 }

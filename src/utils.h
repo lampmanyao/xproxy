@@ -17,6 +17,8 @@
 # define slow(x) (x)
 #endif
 
+#define SHUTUP_WARNING(x) (void)(x);
+
 int set_nonblocking(int sfd);
 int listen_and_bind(const char * address, int port);
 int connect_without_timeout(const char *host, int port);

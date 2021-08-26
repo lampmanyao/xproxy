@@ -17,8 +17,8 @@ struct btgfw {
 	struct el *els[0];
 };
 
-const char *btgfw_version(void);
 struct btgfw *btgfw_new(int sfd, int nthread, accept_callback accept_cb);
 void btgfw_free(struct btgfw *);
 void btgfw_loop(struct btgfw *, int timeout);
+const char *btgfw_version(void);
 

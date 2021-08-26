@@ -1,6 +1,3 @@
-#include "utils.h"
-#include "log.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -13,12 +10,12 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/time.h>
+#include <sys/select.h>
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
-
 
 #if defined(__APPLE__)
 #include <sys/types.h>
@@ -26,10 +23,12 @@
 #include <mach/thread_act.h>
 #endif
 
+#include "utils.h"
+#include "log.h"
+
 #define BACKLOG 65535
 
-int
-set_nonblocking(int fd)
+int set_nonblocking(int fd)
 {
 	int flags = fcntl(fd, F_GETFL, 0);
 	if (flags == -1) {
@@ -39,8 +38,7 @@ set_nonblocking(int fd)
 	return fcntl(fd, F_SETFL, flags);
 }
 
-int
-listen_and_bind(const char *address, int port)
+int listen_and_bind(const char *address, int port)
 {
 	int lfd;
 	struct sockaddr_in serv_addr;
@@ -75,16 +73,15 @@ listen_and_bind(const char *address, int port)
 	return lfd;
 }
 
-int
-connect_without_timeout(const char *host, int port)
+int connect_without_timeout(const char *host, int port)
 {
 	struct sockaddr_in ipv4addr;
 	struct addrinfo hints;
 	struct addrinfo *result;
 	struct addrinfo *rp;
-	int sock;
+	int sock = -1;
 
-	/* Check the host parameter whether is an IP address first. */
+	/* Check whether the host is an IP address first. */
 	if (inet_aton(host, &ipv4addr.sin_addr) == 1) {
 		ipv4addr.sin_family = AF_INET;
 		ipv4addr.sin_port = htons(port);
@@ -134,14 +131,13 @@ connect_without_timeout(const char *host, int port)
 	return (rp == NULL) ? -1 : sock;
 }
 
-int
-connect_with_timeout(const char *host, int port, int milliseconds)
+int connect_with_timeout(const char *host, int port, int milliseconds)
 {
 	struct sockaddr_in ipv4addr;
 	struct addrinfo hints;
 	struct addrinfo *result;
 	struct addrinfo *rp;
-	int sock;
+	int sock = -1;
 
 	/* Check the host parameter whether is an IP address first. */
 	if (inet_aton(host, &ipv4addr.sin_addr) == 1) {
@@ -151,26 +147,46 @@ connect_with_timeout(const char *host, int port, int milliseconds)
 		if (sock < 0) {
 			return -1;
 		}
-
 		set_nonblocking(sock);
 
-		connect(sock, (const struct sockaddr*)&ipv4addr, sizeof(struct sockaddr));
-
-		struct pollfd pollfd;
-		pollfd.fd = sock;
-		pollfd.events = POLLIN | POLLOUT;
-
-		if (poll(&pollfd, 1, milliseconds) == 1) {
-			int so_error;
-			socklen_t error_len = sizeof(so_error);
-			getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &error_len);
-			if (so_error == 0) {
-				return sock;
-			}
+		if (connect(sock, (const struct sockaddr*)&ipv4addr, sizeof(struct sockaddr)) == 0) {
+			return sock;
 		}
 
-		close(sock);
-		return -1;
+		if (errno == EINPROGRESS) {
+			struct pollfd pollfd = {
+				.fd = sock,
+				.events = POLLIN | POLLOUT,
+			};
+
+			int nready = poll(&pollfd, 1, milliseconds);
+			if (nready < 0) {
+				close(sock);
+				return -1;
+			}
+
+			if (nready == 0) {
+				close(sock);
+				return 0;
+			}
+
+			int res;
+			socklen_t res_len = sizeof(res);
+
+			if (getsockopt(pollfd.fd, SOL_SOCKET, SO_ERROR, &res, &res_len) < 0) {
+				close(sock);
+				return -1;
+			}
+
+			if (res != 0) {
+				close(sock);
+				return -1;
+			}
+			return sock;
+		} else {
+			close(sock);
+			return -1;
+		}
 	}
 
 	memset(&hints, 0, sizeof(struct addrinfo));
@@ -195,21 +211,43 @@ connect_with_timeout(const char *host, int port, int milliseconds)
 
 		set_nonblocking(sock);
 
-		connect(sock, rp->ai_addr, rp->ai_addrlen);
-		struct pollfd pollfd;
-		pollfd.fd = sock;
-		pollfd.events = POLLIN | POLLOUT;
+		if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
+			break;
+		}
 
-		if (poll(&pollfd, 1, milliseconds) == 1) {
-			int so_error;
-			socklen_t error_len = sizeof(so_error);
+		if (errno == EINPROGRESS) {
+			struct pollfd pollfd = {
+				.fd = sock,
+				.events = POLLIN | POLLOUT,
+			};
 
-			getsockopt(pollfd.fd, SOL_SOCKET, SO_ERROR, &so_error, &error_len);
+			int nready = poll(&pollfd, 1, milliseconds);
+			if (nready < 0) {
+				close(sock);
+				continue;
+			}
 
-			if (so_error == 0) {
-				break;
+			if (nready == 0) {
+				close(sock);
+				continue;
+			}
+
+			int res;
+			socklen_t res_len = sizeof(res);
+
+			if (getsockopt(pollfd.fd, SOL_SOCKET, SO_ERROR, &res, &res_len) < 0) {
+				close(sock);
+				continue;
+			}
+
+			if (res != 0) {
+				close(sock);
+				continue;
 			}
 			break;
+		} else {
+			close(sock);
+			continue;
 		}
 	}
 
@@ -217,30 +255,26 @@ connect_with_timeout(const char *host, int port, int milliseconds)
 	return (rp == NULL) ? -1 : sock;
 }
 
-void
-wait_milliseconds(int milliseconds)
+void wait_milliseconds(int milliseconds)
 {
 	poll(NULL, 0, milliseconds);
 }
 
 
-void
-oom(unsigned int size)
+void oom(unsigned int size)
 {
 	fprintf(stderr, "out of memory trying to allocate %u bytes\n", size);
 	fflush(stderr);
 	abort();
 }
 
-inline int
-online_cpus(void)
+inline int online_cpus(void)
 {
 	int cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
 	return cores > 0 ? cores : 1;
 }
 
-inline int
-bind_to_cpu(pthread_t tid, int cpuid)
+inline int bind_to_cpu(pthread_t tid, int cpuid)
 {
 #if defined(__APPLE__)
 	mach_port_t mach_tid = pthread_mach_thread_np(tid);
@@ -256,8 +290,7 @@ bind_to_cpu(pthread_t tid, int cpuid)
 #endif
 }
 
-inline int
-bound_cpuid(pthread_t tid)
+inline int bound_cpuid(pthread_t tid)
 {
 #if defined(__APPLE__)
 	mach_port_t mach_tid = pthread_mach_thread_np(tid);
@@ -281,16 +314,14 @@ bound_cpuid(pthread_t tid)
 #endif
 }
 
-inline long
-gettime(void)
+inline long gettime(void)
 {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	return tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-void
-coredump_init(void)
+void coredump_init(void)
 {
 	struct rlimit rlimit;
 	rlimit.rlim_cur = RLIM_INFINITY;
@@ -298,8 +329,7 @@ coredump_init(void)
 	setrlimit(RLIMIT_CORE, &rlimit);
 }
 
-int
-openfiles_init(long max_open_files)
+int openfiles_init(long max_open_files)
 {
 	long max = max_open_files;
 	long sc_open_max = sysconf(_SC_OPEN_MAX);
@@ -314,8 +344,7 @@ openfiles_init(long max_open_files)
 	return setrlimit(RLIMIT_NOFILE, &rlimit);
 }
 
-void
-signals_init(void)
+void signals_init(void)
 {
 	signal(SIGHUP, SIG_IGN);
 	signal(SIGPIPE, SIG_IGN);  /* avoid send() crashes */

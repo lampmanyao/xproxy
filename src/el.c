@@ -1,10 +1,3 @@
-#include "el.h"
-#include "log.h"
-#include "utils.h"
-#include "tcp-connection.h"
-#include "btgfw.h"
-#include "poller.h"
-
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,8 +8,14 @@
 #include <signal.h>
 #include <netinet/in.h>
 
-struct el *
-el_new()
+#include "el.h"
+#include "log.h"
+#include "utils.h"
+#include "tcp-connection.h"
+#include "btgfw.h"
+#include "poller.h"
+
+struct el *el_new()
 {
 	struct el *el = calloc(1, sizeof(*el));
 	if (!el) {
@@ -26,27 +25,33 @@ el_new()
 	return el;
 }
 
-void
-el_free(struct el *el)
+void el_free(struct el *el)
 {
 	poller_close(el->poller);
 	free(el);
 }
 
-void
-el_watch(struct el *el, struct tcp_connection *tcp_conn)
+void el_watch(struct el *el, struct tcp_connection *tcp_conn)
 {
 	poller_add(el->poller, tcp_conn->fd, tcp_conn);
 }
 
-void
-el_stop_watch(struct el *el, struct tcp_connection *tcp_conn)
+void el_unwatch(struct el *el, struct tcp_connection *tcp_conn)
 {
 	poller_del(el->poller, tcp_conn->fd, tcp_conn);
 }
 
-static void *
-el_io_thread(void *arg)
+static void remove_tcp_connection(struct poller_event *ev, int size, struct tcp_connection *tcp_conn)
+{
+	for (int i = 0; i < size; i++) {
+		if (ev[i].ptr == tcp_conn) {
+			ev[i].ptr = NULL;
+			break;
+		}
+	}
+}
+
+static void *el_io_thread(void *arg)
 {
 	struct el *el = (struct el *)arg;
 
@@ -55,17 +60,24 @@ el_io_thread(void *arg)
 		int n = poller_wait(el->poller, ev, 1024, 1000);
 		for (int i = 0; i < n; ++i) {
 			struct tcp_connection *tcp_conn;
-			struct tcp_connection *peer;
-
 			tcp_conn = ev[i].ptr;
-			peer = tcp_conn->peer_tcp_conn;
+
+			if (!tcp_conn)
+				continue;
 
 			if (ev[i].read) {
 				if (tcp_conn->recv_cb(el, tcp_conn) == -1) {
-					el_stop_watch(el, tcp_conn);
-					free_tcp_connection(tcp_conn);
-					if (peer) {
-						peer->peer_tcp_conn = NULL;
+					if (tcp_conn->peer_tcp_conn) {
+						remove_tcp_connection(ev, n, tcp_conn->peer_tcp_conn);
+						el_unwatch(el, tcp_conn->peer_tcp_conn);
+						free_tcp_connection(tcp_conn->peer_tcp_conn);
+						remove_tcp_connection(ev, n, tcp_conn);
+						el_unwatch(el, tcp_conn);
+						free_tcp_connection(tcp_conn);
+					} else {
+						remove_tcp_connection(ev, n, tcp_conn);
+						el_unwatch(el, tcp_conn);
+						free_tcp_connection(tcp_conn);
 					}
 					continue;
 				}
@@ -73,20 +85,35 @@ el_io_thread(void *arg)
 
 			if (ev[i].write) {
 				if (tcp_conn->send_cb(el, tcp_conn) == -1) {
-					el_stop_watch(el, tcp_conn);
-					free_tcp_connection(tcp_conn);
-					if (peer) {
-						peer->peer_tcp_conn = NULL;
+					if (tcp_conn->peer_tcp_conn) {
+						remove_tcp_connection(ev, n, tcp_conn->peer_tcp_conn);
+						el_unwatch(el, tcp_conn->peer_tcp_conn);
+						free_tcp_connection(tcp_conn->peer_tcp_conn);
+
+						remove_tcp_connection(ev, n, tcp_conn);
+						el_unwatch(el, tcp_conn);
+						free_tcp_connection(tcp_conn);
+					} else {
+						remove_tcp_connection(ev, n, tcp_conn);
+						el_unwatch(el, tcp_conn);
+						free_tcp_connection(tcp_conn);
 					}
 					continue;
 				}
 			}
 
-			if (ev[i].error) {
-				el_stop_watch(el, tcp_conn);
-				free_tcp_connection(tcp_conn);
-				if (peer) {
-					peer->peer_tcp_conn = NULL;
+			if (ev[i].eof || ev[i].error) {
+				if (tcp_conn->peer_tcp_conn) {
+					remove_tcp_connection(ev, n, tcp_conn->peer_tcp_conn);
+					el_unwatch(el, tcp_conn->peer_tcp_conn);
+					free_tcp_connection(tcp_conn->peer_tcp_conn);
+					remove_tcp_connection(ev, n, tcp_conn);
+					el_unwatch(el, tcp_conn);
+					free_tcp_connection(tcp_conn);
+				} else {
+					remove_tcp_connection(ev, n, tcp_conn);
+					el_unwatch(el, tcp_conn);
+					free_tcp_connection(tcp_conn);
 				}
 			}
 		}
@@ -103,11 +130,9 @@ el_io_thread(void *arg)
 	return NULL;
 }
 
-void
-el_run(struct el *el)
+void el_run(struct el *el)
 {
-	if (pthread_create(&el->tid, NULL, el_io_thread, el) < 0) {
+	if (pthread_create(&el->tid, NULL, el_io_thread, el) < 0)
 		FATAL("pthread_create(): %s", strerror(errno));
-	}
 }
 

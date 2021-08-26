@@ -1,10 +1,3 @@
-#include "btgfw.h"
-#include "utils.h"
-#include "tcp-connection.h"
-#include "poller.h"
-#include "log.h"
-#include "config.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -14,16 +7,21 @@
 #include <string.h>
 #include <strings.h>
 
+#include "btgfw.h"
+#include "utils.h"
+#include "tcp-connection.h"
+#include "poller.h"
+#include "log.h"
+#include "config.h"
+
 #define CPUID_MASK 127
 
-const char *
-btgfw_version(void)
+const char *btgfw_version(void)
 {
 	return VERSION;
 }
 
-struct btgfw *
-btgfw_new(int sfd, int nthread, accept_callback accept_cb)
+struct btgfw *btgfw_new(int sfd, int nthread, accept_callback accept_cb)
 {
 	struct btgfw *btgfw;
 	btgfw = calloc(1, sizeof(*btgfw) + (size_t)nthread * sizeof(struct el *));
@@ -32,17 +30,15 @@ btgfw_new(int sfd, int nthread, accept_callback accept_cb)
 	}
 
 	btgfw->poller = poller_open();
-	if (btgfw->poller < 0) {
+	if (btgfw->poller < 0)
 		FATAL("cannot open poller: %s", strerror(errno));
-	}
 
 	btgfw->sfd = sfd;
 
 	poller_add(btgfw->poller, btgfw->sfd, NULL);
 
-	for (int i = 0; i < nthread; i++) {
+	for (int i = 0; i < nthread; i++)
 		btgfw->els[i] = el_new();
-	}
 
 	btgfw->nthread = nthread;
 	btgfw->accept_cb = accept_cb;
@@ -50,8 +46,7 @@ btgfw_new(int sfd, int nthread, accept_callback accept_cb)
 	return btgfw;
 }
 
-void
-btgfw_loop(struct btgfw *btgfw, int timeout)
+void btgfw_loop(struct btgfw *btgfw, int timeout)
 {
 	int cpus = online_cpus();
 
@@ -70,24 +65,20 @@ btgfw_loop(struct btgfw *btgfw, int timeout)
 		}
 
 		if (n == -1) {
-			if (errno == EINTR) {
+			if (errno == EINTR)
 				continue;
-			}
 
-			ERROR("poller_wait(): %s", strerror(errno));
 			return;
 		}
 	}
 }
 
-void
-btgfw_free(struct btgfw *btgfw)
+void btgfw_free(struct btgfw *btgfw)
 {
 	pthread_join(btgfw->tid, NULL);
 	poller_close(btgfw->poller);
-	for (int i = 0; i < btgfw->nthread; i++) {
+	for (int i = 0; i < btgfw->nthread; i++)
 		el_free(btgfw->els[i]);
-	}
 	free(btgfw);
 }
 
