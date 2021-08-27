@@ -1,5 +1,5 @@
-bin_PROGRAMS = local-btgfw remote-btgfw
+bin_PROGRAMS = local-proxy remote-proxy
 
-local_btgfw_SOURCES = btgfw.c el.c cfg.c tcp-connection.c crypt.c utils.c local-btgfw.c poller.c
-remote_btgfw_SOURCES = btgfw.c el.c cfg.c tcp-connection.c crypt.c utils.c remote-btgfw.c poller.c
+local_proxy_SOURCES = xproxy.c el.c cfg.c tcp-connection.c crypt.c utils.c local-proxy.c poller.c
+remote_proxy_SOURCES = xproxy.c el.c cfg.c tcp-connection.c crypt.c utils.c remote-proxy.c poller.c
 

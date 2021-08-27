@@ -1,4 +1,5 @@
-#pragma once
+#ifndef utils_h
+#define utils_h
 
 #include <pthread.h>
 
@@ -25,7 +26,7 @@ int connect_without_timeout(const char *host, int port);
 int connect_with_timeout(const char *host, int port, int milliseconds);
 void wait_milliseconds(int milliseconds);
 
-void oom(unsigned int size);
+void oom(size_t size);
 int online_cpus(void);
 int bind_to_cpu(pthread_t tid, int cpuid);
 int bound_cpuid(pthread_t tid);
@@ -33,4 +34,6 @@ long gettime(void);
 void coredump_init(void);
 int openfiles_init(long);
 void signals_init(void);
+
+#endif  /* utils_h */
 

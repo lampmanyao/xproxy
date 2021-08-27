@@ -12,7 +12,7 @@
 #include "log.h"
 #include "utils.h"
 #include "tcp-connection.h"
-#include "btgfw.h"
+#include "xproxy.h"
 #include "poller.h"
 
 struct el *el_new()

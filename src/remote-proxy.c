@@ -9,7 +9,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "btgfw.h"
+#include "xproxy.h"
 #include "socks5.h"
 #include "el.h"
 #include "tcp-connection.h"
@@ -19,7 +19,7 @@
 #include "crypt.h"
 #include "utils.h"
 
-static void accept_cb(struct btgfw *btgfw, int lfd);
+static void accept_cb(struct xproxy *xproxy, int lfd);
 static int recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int recvfrom_target_cb(struct el *el, struct tcp_connection *tcp_conn);
@@ -48,7 +48,7 @@ struct cfgopts cfg_opts[] = {
 	{ NULL, 0, NULL, {0, NULL} }
 };
 
-static void accept_cb(struct btgfw *btgfw, int lfd)
+static void accept_cb(struct xproxy *xproxy, int lfd)
 {
 	int fd;
 	struct tcp_connection *tcp_conn;
@@ -59,11 +59,11 @@ static void accept_cb(struct btgfw *btgfw, int lfd)
 	fd = accept(lfd, (struct sockaddr*)&sock_addr, &addr_len);
 
 	if (fd > 0) {
-		INFO("accept incoming from %s:%d with client %d",
-		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
+		INFO("Accept incoming from %s:%d.",
+		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
 		set_nonblocking(fd);
 		tcp_conn = new_tcp_connection(fd, 4096, recvfrom_client_cb, sendto_client_cb);
-		el_watch(btgfw->els[fd % btgfw->nthread], tcp_conn);
+		el_watch(xproxy->els[fd % xproxy->nthread], tcp_conn);
 	} else {
 		return;
 	}
@@ -88,7 +88,7 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 
 	plaintext_len = cryptor.decrypt(&cryptor, (char**)&plaintext, data + 4, ciphertext_len);
 	if (slow(plaintext_len < 0)) {
-		ERROR("decrypt failed");
+		ERROR("Decryption failure.");
 		return -1;
 	}
 
@@ -120,7 +120,7 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 
 		fd = connect_with_timeout(ipv4, hsport, 1000);
 		if (fd < 0) {
-			ERROR("connect to %s:%d failed", ipv4, hsport);
+			ERROR("Cannot connect to server (%s:%d).", ipv4, hsport);
 			free(plaintext);
 			return -1;
 		}
@@ -129,7 +129,7 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 		target = new_tcp_connection(fd, 4096, recvfrom_target_cb, sendto_target_cb);
 		el_watch(el, target);
 
-		INFO("client %d connected to %s with target %d", client->fd, ipv4, target->fd);
+		INFO("Connected to server (%s:%d).", ipv4, hsport);
 
 		target->peer_tcp_conn = client;
 		client->peer_tcp_conn = target;
@@ -181,8 +181,8 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 		hsport = ntohs(nport);
 
 		fd = connect_with_timeout(domain_name, hsport, 1000);
-		if (slow(fd < 0)) {
-			ERROR("connect to %s failed", domain_name);
+		if (slow(fd <= 0)) {
+			ERROR("Cannot connect to server (%s:%d)", domain_name, hsport);
 			free(plaintext);
 			return -1;
 		}
@@ -194,7 +194,7 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 		client->peer_tcp_conn = target;
 		target->peer_tcp_conn = client;
 
-		INFO("client %d connected to %s with target %d", client->fd, domain_name, client->peer_tcp_conn->fd);
+		INFO("Connected to server (%s:%d).", domain_name, hsport);
 
 		memcpy(client->host, domain_name, domain_name_len);
 		client->host[domain_name_len] = '\0';
@@ -457,7 +457,7 @@ static int sendto_target_cb(struct el *el, struct tcp_connection *target)
 
 static void usage(void) {
 	printf("Usage:\n");
-	printf("    remote-btgfw\n");
+	printf("    remote-xproxy\n");
 	printf("        -c <config>           Use configure file to start.\n");
 	printf("        -b <local-address>    Local address to bind: 127.0.0.1 or 0.0.0.0.\n");
 	printf("        -l <local-port>       Port number for listen.\n");
@@ -535,8 +535,10 @@ int main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (vflag)
-		printf("\nbtgfw version: %s\n\n", btgfw_version());
+	if (vflag) {
+		printf("xproxy, version %s\n", xproxy_version());
+		return 0;
+	}
 
 	if (hflag)
 		usage();
@@ -559,7 +561,7 @@ int main(int argc, char **argv)
 	}
 
 	int sfd;
-	struct btgfw *btgfw;
+	struct xproxy *xproxy;
 
 	if (openfiles_init(configuration.maxfiles) != 0) {
 		FATAL("Set max open files to %d failed: %s.",
@@ -573,12 +575,12 @@ int main(int argc, char **argv)
 
 	INFO("Listening on port %d.", configuration.local_port);
 
-	btgfw = btgfw_new(sfd, configuration.nthread, accept_cb);
-	btgfw_loop(btgfw, 1000);
+	xproxy = xproxy_new(sfd, configuration.nthread, accept_cb);
+	xproxy_loop(xproxy, 1000);
 
 	cryptor_deinit(&cryptor);
 	close(sfd);
-	btgfw_free(btgfw);
+	xproxy_free(xproxy);
 	crypt_cleanup();
 
         return 0;

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef log_h
+#define log_h
 
 #include <stdio.h>
 #include <unistd.h>
@@ -65,4 +66,6 @@
 	fflush(stderr); \
 	exit(-1); \
 } while (0)
+
+#endif  /* log_h */
 

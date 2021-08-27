@@ -1,4 +1,5 @@
-#pragma once
+#ifndef socks5_h
+#define socks5_h
 
 #define SOCKS5_VER    5
 #define SOCKS5_RSV    0
@@ -36,4 +37,6 @@
 #define SOCKS5_REQ_HEAD_SIZE  4U
 #define SOCKS5_RSP_HEAD_SIZE  4U
 #define SOCKS5_IPV4_REQ_SIZE  10U
+
+#endif  /* socks5_h */
 

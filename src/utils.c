@@ -261,9 +261,9 @@ void wait_milliseconds(int milliseconds)
 }
 
 
-void oom(unsigned int size)
+void oom(size_t size)
 {
-	fprintf(stderr, "out of memory trying to allocate %u bytes\n", size);
+	fprintf(stderr, "Out of memory trying to allocate %lu bytes.\n", size);
 	fflush(stderr);
 	abort();
 }

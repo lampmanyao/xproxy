@@ -9,7 +9,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "btgfw.h"
+#include "xproxy.h"
 #include "socks5.h"
 #include "el.h"
 #include "tcp-connection.h"
@@ -19,7 +19,7 @@
 #include "crypt.h"
 #include "utils.h"
 
-static void accept_cb(struct btgfw *btgfw, int lfd);
+static void accept_cb(struct xproxy *xproxy, int lfd);
 static int recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int recvfrom_remote_cb(struct el *el, struct tcp_connection *tcp_conn);
@@ -53,7 +53,7 @@ struct cfgopts cfg_opts[] = {
 };
 
 
-static void accept_cb(struct btgfw *btgfw, int lfd)
+static void accept_cb(struct xproxy *xproxy, int lfd)
 {
 	int fd;
 	struct tcp_connection *tcp_conn;
@@ -63,12 +63,12 @@ static void accept_cb(struct btgfw *btgfw, int lfd)
 	fd = accept(lfd, (struct sockaddr*)&sock_addr, &addr_len);
 
 	if (fd > 0) {
-		INFO("accept incoming from %s:%d with client %d",
-		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port), fd);
+		INFO("Accept incoming from %s:%d.",
+		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
 
 		set_nonblocking(fd);
 		tcp_conn = new_tcp_connection(fd, 4096, recvfrom_client_cb, sendto_client_cb);
-		el_watch(btgfw->els[fd % btgfw->nthread], tcp_conn);
+		el_watch(xproxy->els[fd % xproxy->nthread], tcp_conn);
 	} else {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 			ERROR("accept(): %s", strerror(errno));
@@ -170,7 +170,7 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 			return -1;
 		}
 
-		INFO("client %d connected to remote %d", client->fd, fd);
+		INFO("Connected to remote-proxy (%s).", configuration.remote_addr);
 
 		remote = new_tcp_connection(fd, 4096, recvfrom_remote_cb, sendto_remote_cb);
 		el_watch(el, remote);
@@ -230,6 +230,8 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 			ERROR("Connect to remote host timeout.");
 			return -1;
 		}
+
+		INFO("Connected to remote-proxy (%s).", configuration.remote_addr);
 
 		remote = new_tcp_connection(fd, 4096, recvfrom_remote_cb, sendto_remote_cb);
 		el_watch(el, remote);
@@ -602,12 +604,12 @@ static int sendto_remote_cb(struct el *el, struct tcp_connection *remote)
 static void usage(void)
 {
 	printf("Usage:\n");
-	printf("    local-btgfw\n");
+	printf("    local-xproxy\n");
 	printf("        -c <config>           Use configure file to start.\n");
 	printf("        -b <local-address>    Local address to bind: 127.0.0.1 or 0.0.0.0.\n");
 	printf("        -l <local-port>       Port number for listen.\n");
-	printf("        -r <remote-address>   Host name or IP address of remote btgfw.\n");
-	printf("        -p <remote-port>      Port number of remote btgfw.\n");
+	printf("        -r <remote-address>   Host name or IP address of remote xproxy.\n");
+	printf("        -p <remote-port>      Port number of remote xproxy.\n");
 	printf("        -k <password>         Password.\n");
 	printf("        [-e <method>]         Cipher suite: aes-128-cfb, aes-192-cfb, aes-256-cfb.\n");
 	printf("        [-t <nthread>         I/O thread number. Defaults to 8.\n");
@@ -694,8 +696,10 @@ int main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (vflag)
-		printf("\nbtgfw version: %s\n\n", btgfw_version());
+	if (vflag) {
+		printf("xproxy, version %s\n", xproxy_version());
+		return 0;
+	}
 
 	if (hflag)
 		usage();
@@ -718,7 +722,7 @@ int main(int argc, char **argv)
 	}
 
 	int sfd;
-	struct btgfw *btgfw;
+	struct xproxy *xproxy;
 
 	if (openfiles_init(configuration.maxfiles) != 0) {
 		FATAL("set max open files to %d failed: %s.",
@@ -731,12 +735,12 @@ int main(int argc, char **argv)
 
 	INFO("Listening on port %d.", configuration.local_port);
 
-	btgfw = btgfw_new(sfd, configuration.nthread, accept_cb);
-	btgfw_loop(btgfw, -1);
+	xproxy = xproxy_new(sfd, configuration.nthread, accept_cb);
+	xproxy_loop(xproxy, -1);
 
 	cryptor_deinit(&cryptor);
 	close(sfd);
-	btgfw_free(btgfw);
+	xproxy_free(xproxy);
 	crypt_cleanup();
 
         return 0;

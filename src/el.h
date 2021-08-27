@@ -1,4 +1,5 @@
-#pragma once
+#ifndef el_h
+#define el_h
 
 #include <pthread.h>
 
@@ -14,4 +15,6 @@ void el_free(struct el *);
 void el_watch(struct el *, struct tcp_connection*);
 void el_unwatch(struct el *, struct tcp_connection*);
 void el_run(struct el *);
+
+#endif  /* el_h */
 

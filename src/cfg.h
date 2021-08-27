@@ -1,4 +1,5 @@
-#pragma once
+#ifndef cfg_h
+#define cfg_h
 
 struct defval {
 	int int4;
@@ -14,4 +15,6 @@ struct cfgopts {
 
 int cfg_load_file(const char *configfile, struct cfgopts config_options[]);
 void cfg_load_defaults(struct cfgopts config_options[]);
+
+#endif  /* cfg_h */
 

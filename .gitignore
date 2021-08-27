@@ -1,6 +1,6 @@
 src/*.o
-src/remote-btgfw
-src/local-btgfw
+src/local-proxy
+src/remote-proxy
 Makefile
 Makefile.in
 aclocal.m4

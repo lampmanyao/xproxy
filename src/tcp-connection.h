@@ -1,4 +1,5 @@
-#pragma once
+#ifndef tcp_connection_h
+#define tcp_connection_h
 
 #include <stddef.h>
 
@@ -39,4 +40,6 @@ void tcp_connection_reset_txbuf(struct tcp_connection *);
 
 void tcp_connection_move_txbuf(struct tcp_connection *, size_t);
 void tcp_connection_move_rxbuf(struct tcp_connection *, size_t);
+
+#endif  /* tcp_connection_h */
 

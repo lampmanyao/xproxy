@@ -1,4 +1,5 @@
-#pragma once
+#ifndef poller_h
+#define poller_h
 
 #include <stdbool.h>
 
@@ -19,3 +20,6 @@ int poller_enable_read(int poller, int fd, void *ud);
 int poller_disable_read(int poller, int fd, void *ud);
 int poller_enable_write(int poller, int fd, void *ud);
 int poller_disable_write(int poller, int fd, void *ud);
+
+#endif  /* poller_h */
+
