@@ -1,4 +1,4 @@
-AC_INIT([btgfw], [0.5.3], [lampmanyao@gmail.com])
+AC_INIT([xproxy], [0.6.1], [lampmanyao@gmail.com])
 
 AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 
@@ -30,18 +30,18 @@ AC_CHECK_HEADERS(m4_normalize([
 
 AC_CHECK_FUNCS([getaddrinfo getnameinfo inet_ntop inet_ntoa])
 
-AC_ARG_WITH([openssl-header],
-	    [AS_HELP_STRING([--with-openssl-header], [Location of OpenSSL header folder, defaults to /usr/include])],
-	    [openssl_header_dir="$withval"],
-	    [openssl_header_dir="/usr/include"])
+AC_ARG_ENABLE([static_openssl],
+		AS_HELP_STRING([--enable-static-openssl], [Compile with static openssl libs.]),
+		[static_openssl="yes"], #
+		[static_openssl="no"])
 
-AC_ARG_WITH([openssl-lib],
-	    [AS_HELP_STRING([--with-openssl-lib], [Location of OpenSSL lib folder, defaults to /usr/lib/x86_64-linux-gnu])],
-	    [openssl_lib_dir="$withval"],
-	    [openssl_lib_dir="/usr/lib/x86_64-linux-gnu"])
+AM_CONDITIONAL(DEBUG, test x"$static_openssl" = x"yes")
+AS_IF([test x"$static_openssl" = x"yes"],
+      [LDFLAGS="/usr/local/lib/libssl.a /usr/local/lib/libcrypto.a" LIBS="-lpthread -ldl"],
+      [LIBS="-lpthread -ldl -lssl -lcrypto"])
 
 AC_ARG_ENABLE([debug],
-AS_HELP_STRING([--enable-debug=yes|no], [enable or disable debugging, default is disabled]),
+AS_HELP_STRING([--enable-debug=yes|no], [Enable debugging, default is disabled.]),
 	      [debug="$enableval"],
               [debug="no"])
 
@@ -50,18 +50,8 @@ AS_IF([test x"$debug" = x"yes"],
       [CFLAGS="-g3 -O0 -fsanitize=address"],
       [CFLAGS="-O2"])
 
-AC_ARG_ENABLE([static],
-AS_HELP_STRING([--enable-static=yes|no], [enable or disable debugging, default is disabled]),
-	      [static="$enableval"],
-              [static="no"])
 
-AM_CONDITIONAL(DEBUG, test x"$static" = x"yes")
-AS_IF([test x"$static" = x"yes"],
-      [LDFLAGS="$openssl_lib_dir/libssl.a $openssl_lib_dir/libcrypto.a" LIBS="-lpthread -ldl"],
-      [LDFLAGS="-L$openssl_lib_dir" LIBS="-lpthread -ldl -lssl -lcrypto"])
-
-
-CFLAGS="$CFLAGS -I$openssl_header_dir \
+CFLAGS="$CFLAGS \
 	-std=c99 -Wall -Wpointer-arith -fno-omit-frame-pointer \
 	-Wsign-compare -Wno-unused-result -Wno-unused-function \
 	-Wextra -Wshadow -Wconversion -funroll-loops -fPIC -pipe"
@@ -83,5 +73,6 @@ AC_MSG_NOTICE([CPPFLAGS:            $CPPFLAGS])
 AC_MSG_NOTICE([CLAGS:               $CFLAGS])
 AC_MSG_NOTICE([LDFLAGS:             $LDFLAGS])
 AC_MSG_NOTICE([Enable debug:        $debug])
+AC_MSG_NOTICE([Compile with static openssl libs: $static_openssl])
 AC_MSG_NOTICE([ =============================])
 
