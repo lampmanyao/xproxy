@@ -10,7 +10,13 @@
 
 #include "crypt.h"
 #include "utils.h"
+#include "log.h"
 
+/*
+ * Using openssl in multi-threaded applications:
+ * https://www.openssl.org/blog/blog/2017/02/21/threads/
+ */
+#if (OPENSSL_VERSION_NUMBER <= 0x10002000l)
 static pthread_mutex_t *lock_cs;
 static long *lock_count;
 
@@ -31,46 +37,62 @@ static unsigned long pthreads_thread_id(void)
 	unsigned long ret = (unsigned long)pthread_self();
 	return ret;
 }
+#endif
 
 void crypt_setup(void)
 {
+/*
+ * SSL_library_init() and OpenSSL_add_all_algorithms() were deprecated since 1.1.0
+ */
+#if (OPENSSL_VERSION_NUMBER < 0x10100000l)
 	SSL_library_init();
 	OpenSSL_add_all_algorithms();
 	SSL_load_error_strings();
+#else
+	if (OPENSSL_init_ssl(OPENSSL_INIT_ENGINE_ALL_BUILTIN, NULL) != 1)
+		FATAL("openssl init failed");
+#endif
 
+#if (OPENSSL_VERSION_NUMBER <= 0x10002000l)
 	int num_locks = CRYPTO_num_locks();
 
 	lock_cs = OPENSSL_malloc((size_t)num_locks * sizeof(pthread_mutex_t));
 	lock_count = (long *)OPENSSL_malloc((size_t)num_locks * sizeof(long));
 
 	if (!lock_cs || !lock_count) {
-		if (lock_cs) {
+		if (lock_cs)
 			OPENSSL_free(lock_cs);
-		}
-		if (lock_count) {
+
+		if (lock_count)
 			OPENSSL_free(lock_count);
-		}
+
 		return;
 	}
+
 	for (int i = 0; i < num_locks; i++) {
 		lock_count[i] = 0;
 		pthread_mutex_init(&lock_cs[i], NULL);
 	}
+
 	CRYPTO_set_id_callback((unsigned long (*)())pthreads_thread_id);
 	CRYPTO_set_locking_callback((void (*)(int, int, const char *, int))pthreads_locking_callback);
+#endif
 }
 
 void crypt_cleanup(void)
 {
+#if (OPENSSL_VERSION_NUMBER <= 0x10002000l)
 	CRYPTO_set_locking_callback(NULL);
-
-	for (int i = 0; i < CRYPTO_num_locks(); i++) {
+	for (int i = 0; i < CRYPTO_num_locks(); i++)
 		pthread_mutex_destroy(&(lock_cs[i]));
-	}
 
 	OPENSSL_free(lock_cs);
 	OPENSSL_free(lock_count);
+#endif
+
+#if (OPENSSL_VERSION_NUMBER < 0x10100000l)
 	ERR_free_strings();
+#endif
 }
 
 static int encrypt_128cfb(struct cryptor *c, char **ciphertext, char *plaintext, unsigned int length);
@@ -94,14 +116,13 @@ static void generate_key(unsigned char *key, int key_size, const char *password)
 
 	i = MD5_DIGEST_LENGTH;
 	j = 0;
-	while (i--) {
+
+	while (i--)
 		key[i] = buffer[j++];
-	}
 
 	j = 0;
-	for (i = MD5_DIGEST_LENGTH; i < key_size; i++) {
+	for (i = MD5_DIGEST_LENGTH; i < key_size; i++)
 		key[i] = buffer[j++];
-	}
 
 	key[key_size] = '\0';
 }
@@ -115,13 +136,11 @@ static void generate_iv(unsigned char *iv, int iv_size, const unsigned char *str
 	MD5_Update(&md5_ctx, str, len);
 	MD5_Final(buffer, &md5_ctx);
 
-	for (i = 0; i < MD5_DIGEST_LENGTH; i++) {
+	for (i = 0; i < MD5_DIGEST_LENGTH; i++)
 		iv[i] = buffer[i];
-	}
 
-	while (i++ < iv_size - 1) {
+	while (i++ < iv_size - 1)
 		iv[i] = buffer[i - MD5_DIGEST_LENGTH];
-	}
 }
 
 struct cipher {
