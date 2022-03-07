@@ -19,6 +19,8 @@
 #include "crypt.h"
 #include "utils.h"
 
+#define BUFF_SIZE 4096
+
 static void accept_cb(struct xproxy *xproxy, int lfd);
 static int recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
 static int sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
@@ -67,7 +69,7 @@ static void accept_cb(struct xproxy *xproxy, int lfd)
 		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
 
 		set_nonblocking(fd);
-		tcp_conn = new_tcp_connection(fd, 4096, recvfrom_client_cb, sendto_client_cb);
+		tcp_conn = new_tcp_connection(fd, BUFF_SIZE, recvfrom_client_cb, sendto_client_cb);
 		el_watch(xproxy->els[fd % xproxy->nthread], tcp_conn);
 	} else {
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
@@ -172,7 +174,7 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 
 		INFO("Connected to remote-proxy (%s).", configuration.remote_addr);
 
-		remote = new_tcp_connection(fd, 4096, recvfrom_remote_cb, sendto_remote_cb);
+		remote = new_tcp_connection(fd, BUFF_SIZE, recvfrom_remote_cb, sendto_remote_cb);
 		el_watch(el, remote);
 
 		memcpy(client->host, ipv4, strlen(ipv4));
@@ -233,7 +235,7 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 
 		INFO("Connected to remote-proxy (%s).", configuration.remote_addr);
 
-		remote = new_tcp_connection(fd, 4096, recvfrom_remote_cb, sendto_remote_cb);
+		remote = new_tcp_connection(fd, BUFF_SIZE, recvfrom_remote_cb, sendto_remote_cb);
 		el_watch(el, remote);
 
 		memcpy(client->host, domain_name, domain_name_len);
@@ -342,8 +344,8 @@ static int recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 	struct tcp_connection *remote = NULL;
 
 	while (1) {
-		char buf[4096];
-		ssize_t rx = recv(client->fd, buf, sizeof(buf), 0);
+		char buf[BUFF_SIZE];
+		ssize_t rx = recv(client->fd, buf, BUFF_SIZE - 1, 0);
 		if (fast(rx > 0)) {
 			tcp_connection_append_rxbuf(client, buf, (size_t)rx);
 		} else if (rx < 0) {
@@ -544,8 +546,8 @@ static int recvfrom_remote_cb(struct el *el, struct tcp_connection *remote)
 {
 	int ret = -1;
 	while (1) {
-		char buf[4096];
-		ssize_t rx = recv(remote->fd, buf, sizeof(buf), 0);
+		char buf[BUFF_SIZE];
+		ssize_t rx = recv(remote->fd, buf, BUFF_SIZE - 1, 0);
 		if (fast(rx > 0)) {
 			tcp_connection_append_rxbuf(remote, buf, (size_t)rx);
 		} else if (rx < 0) {

@@ -55,8 +55,8 @@ void free_tcp_connection(struct tcp_connection *tcp_conn)
 
 void tcp_connection_append_rxbuf(struct tcp_connection *tcp_conn, char *data, size_t len)
 {
-	size_t avaliable = tcp_conn->rxbuf_capacity - tcp_conn->rxbuf_length;
-	if (avaliable >= len) {
+	size_t available = tcp_conn->rxbuf_capacity - tcp_conn->rxbuf_length;
+	if (available >= len) {
 		memcpy(tcp_conn->rxbuf + tcp_conn->rxbuf_length, data, len);
 		tcp_conn->rxbuf_length += len;
 	} else {
@@ -81,8 +81,8 @@ void tcp_connection_append_rxbuf(struct tcp_connection *tcp_conn, char *data, si
 
 void tcp_connection_append_txbuf(struct tcp_connection *tcp_conn, char *data, size_t len)
 {
-	size_t avaliable = tcp_conn->txbuf_capacity - tcp_conn->txbuf_length;
-	if (avaliable >= len) {
+	size_t available = tcp_conn->txbuf_capacity - tcp_conn->txbuf_length;
+	if (available >= len) {
 		memcpy(tcp_conn->txbuf + tcp_conn->txbuf_length, data, len);
 		tcp_conn->txbuf_length += len;
 	} else {

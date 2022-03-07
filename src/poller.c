@@ -16,9 +16,9 @@
 int poller_open()
 {
 	int fd = epoll_create(1024);
-	if (fd == -1) {
+	if (fd == -1)
 		FATAL("epoll_create() error: %s", strerror(errno));
-	}
+
 	return fd;
 }
 
@@ -66,7 +66,7 @@ int poller_enable_write(int poller, int fd, void *ud)
 int poller_disable_write(int poller, int fd, void *ud)
 {
 	struct epoll_event ev = {
-		.events = EPOLLRDHUP | EPOLLET,
+		.events = EPOLLIN | EPOLLRDHUP | EPOLLET,
 		.data.ptr = ud
 	};
 	return epoll_ctl(poller, EPOLL_CTL_MOD, fd, &ev);
@@ -105,9 +105,8 @@ int poller_wait(int poller, struct poller_event *e, int max, int ms)
 int poller_open()
 {
 	int fd = kqueue();
-	if (fd == -1) {
+	if (fd == -1)
 		FATAL("keueue() error: %s", strerror(errno));
-	}
 
 	return fd;
 }
@@ -200,7 +199,7 @@ int poller_wait(int poller,  struct poller_event *ev, int max, int ms)
 		int16_t filter = ke[i].filter;
 		uint16_t flags = ke[i].flags;
 		uint16_t eof = flags & EV_EOF;
-		ev[i].read  = (filter == EVFILT_READ);// && !eof;
+		ev[i].read  = (filter == EVFILT_READ);
 		ev[i].write = (filter == EVFILT_WRITE);
 		ev[i].eof   = eof;
 		ev[i].error = flags & EV_ERROR;

@@ -18,9 +18,9 @@
 struct el *el_new()
 {
 	struct el *el = calloc(1, sizeof(*el));
-	if (!el) {
+	if (!el)
 		oom(sizeof(*el));
-	}
+
 	el->poller = poller_open();
 	return el;
 }
@@ -41,14 +41,27 @@ void el_unwatch(struct el *el, struct tcp_connection *tcp_conn)
 	poller_del(el->poller, tcp_conn->fd, tcp_conn);
 }
 
-static void remove_tcp_connection(struct poller_event *ev, int size, struct tcp_connection *tcp_conn)
+static void remove_tcp_connection(struct poller_event *ev, int n, struct tcp_connection *tcp_conn)
 {
-	for (int i = 0; i < size; i++) {
+	for (int i = 0; i < n; i++) {
 		if (ev[i].ptr == tcp_conn) {
 			ev[i].ptr = NULL;
 			break;
 		}
 	}
+}
+
+static void handle_error(struct el *el, struct poller_event *ev, int n, struct tcp_connection *tcp_conn)
+{
+	if (tcp_conn->peer_tcp_conn) {
+		remove_tcp_connection(ev, n, tcp_conn->peer_tcp_conn);
+		el_unwatch(el, tcp_conn->peer_tcp_conn);
+		free_tcp_connection(tcp_conn->peer_tcp_conn);
+	}
+
+	remove_tcp_connection(ev, n, tcp_conn);
+	el_unwatch(el, tcp_conn);
+	free_tcp_connection(tcp_conn);
 }
 
 static void *el_io_thread(void *arg)
@@ -67,63 +80,27 @@ static void *el_io_thread(void *arg)
 
 			if (ev[i].read) {
 				if (tcp_conn->recv_cb(el, tcp_conn) == -1) {
-					if (tcp_conn->peer_tcp_conn) {
-						remove_tcp_connection(ev, n, tcp_conn->peer_tcp_conn);
-						el_unwatch(el, tcp_conn->peer_tcp_conn);
-						free_tcp_connection(tcp_conn->peer_tcp_conn);
-						remove_tcp_connection(ev, n, tcp_conn);
-						el_unwatch(el, tcp_conn);
-						free_tcp_connection(tcp_conn);
-					} else {
-						remove_tcp_connection(ev, n, tcp_conn);
-						el_unwatch(el, tcp_conn);
-						free_tcp_connection(tcp_conn);
-					}
+					handle_error(el, ev, n, tcp_conn);
 					continue;
 				}
 			}
 
 			if (ev[i].write) {
 				if (tcp_conn->send_cb(el, tcp_conn) == -1) {
-					if (tcp_conn->peer_tcp_conn) {
-						remove_tcp_connection(ev, n, tcp_conn->peer_tcp_conn);
-						el_unwatch(el, tcp_conn->peer_tcp_conn);
-						free_tcp_connection(tcp_conn->peer_tcp_conn);
-
-						remove_tcp_connection(ev, n, tcp_conn);
-						el_unwatch(el, tcp_conn);
-						free_tcp_connection(tcp_conn);
-					} else {
-						remove_tcp_connection(ev, n, tcp_conn);
-						el_unwatch(el, tcp_conn);
-						free_tcp_connection(tcp_conn);
-					}
+					handle_error(el, ev, n, tcp_conn);
 					continue;
 				}
 			}
 
 			if (ev[i].eof || ev[i].error) {
-				if (tcp_conn->peer_tcp_conn) {
-					remove_tcp_connection(ev, n, tcp_conn->peer_tcp_conn);
-					el_unwatch(el, tcp_conn->peer_tcp_conn);
-					free_tcp_connection(tcp_conn->peer_tcp_conn);
-					remove_tcp_connection(ev, n, tcp_conn);
-					el_unwatch(el, tcp_conn);
-					free_tcp_connection(tcp_conn);
-				} else {
-					remove_tcp_connection(ev, n, tcp_conn);
-					el_unwatch(el, tcp_conn);
-					free_tcp_connection(tcp_conn);
-				}
+				handle_error(el, ev, n, tcp_conn);
 			}
 		}
 
 		if (n == -1) {
-			if (errno == EINTR) {
+			if (errno == EINTR)
 				continue;
-			} else {
-				return NULL;
-			}
+			return NULL;
 		}
 	}
 

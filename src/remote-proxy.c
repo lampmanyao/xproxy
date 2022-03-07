@@ -19,11 +19,13 @@
 #include "crypt.h"
 #include "utils.h"
 
+#define BUFF_SIZE 4096
+
 static void accept_cb(struct xproxy *xproxy, int lfd);
-static int recvfrom_client_cb(struct el *el, struct tcp_connection *tcp_conn);
-static int sendto_client_cb(struct el *el, struct tcp_connection *tcp_conn);
-static int recvfrom_target_cb(struct el *el, struct tcp_connection *tcp_conn);
-static int sendto_target_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int recvfrom_local_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int sendto_local_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int recvfrom_server_cb(struct el *el, struct tcp_connection *tcp_conn);
+static int sendto_server_cb(struct el *el, struct tcp_connection *tcp_conn);
 
 static struct cryptor cryptor;
 
@@ -59,19 +61,20 @@ static void accept_cb(struct xproxy *xproxy, int lfd)
 	fd = accept(lfd, (struct sockaddr*)&sock_addr, &addr_len);
 
 	if (fd > 0) {
-		INFO("Accept incoming from %s:%d.",
+		INFO("Accept incoming from local %s:%d.",
 		      inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
 		set_nonblocking(fd);
-		tcp_conn = new_tcp_connection(fd, 4096, recvfrom_client_cb, sendto_client_cb);
+		tcp_conn = new_tcp_connection(fd, BUFF_SIZE, recvfrom_local_cb, sendto_local_cb);
 		el_watch(xproxy->els[fd % xproxy->nthread], tcp_conn);
 	} else {
-		return;
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			ERROR("accept(): %s", strerror(errno));
 	}
 }
 
 static int client_exchange_host(struct el *el, struct tcp_connection *client)
 {
-	struct tcp_connection *target;
+	struct tcp_connection *server;
 	char *data = client->rxbuf;
 	size_t len = client->rxbuf_length;
 
@@ -126,18 +129,18 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 		}
 
 		set_nonblocking(fd);
-		target = new_tcp_connection(fd, 4096, recvfrom_target_cb, sendto_target_cb);
-		el_watch(el, target);
+		server = new_tcp_connection(fd, BUFF_SIZE, recvfrom_server_cb, sendto_server_cb);
+		el_watch(el, server);
 
 		INFO("Connected to server (%s:%d).", ipv4, hsport);
 
-		target->peer_tcp_conn = client;
-		client->peer_tcp_conn = target;
+		server->peer_tcp_conn = client;
+		client->peer_tcp_conn = server;
 
 		memcpy(client->host, ipv4, sizeof(ipv4));
 		client->host[sizeof(ipv4)] = '\0';
-		memcpy(target->host, ipv4, sizeof(ipv4));
-		target->host[sizeof(ipv4)] = '\0';
+		memcpy(server->host, ipv4, sizeof(ipv4));
+		server->host[sizeof(ipv4)] = '\0';
 
 		reply[0] = ver;
 		reply[1] = SOCKS5_RSP_SUCCEED;
@@ -188,18 +191,18 @@ static int client_exchange_host(struct el *el, struct tcp_connection *client)
 		}
 
 		set_nonblocking(fd);
-		target = new_tcp_connection(fd, 4096, recvfrom_target_cb, sendto_target_cb);
-		el_watch(el, target);
+		server = new_tcp_connection(fd, BUFF_SIZE, recvfrom_server_cb, sendto_server_cb);
+		el_watch(el, server);
 
-		client->peer_tcp_conn = target;
-		target->peer_tcp_conn = client;
+		client->peer_tcp_conn = server;
+		server->peer_tcp_conn = client;
 
 		INFO("Connected to server (%s:%d).", domain_name, hsport);
 
 		memcpy(client->host, domain_name, domain_name_len);
 		client->host[domain_name_len] = '\0';
-		memcpy(target->host, domain_name, domain_name_len);
-		target->host[domain_name_len] = '\0';
+		memcpy(server->host, domain_name, domain_name_len);
+		server->host[domain_name_len] = '\0';
 
 		reply[0] = ver;
 		reply[1] = SOCKS5_RSP_SUCCEED;
@@ -242,11 +245,11 @@ reply_to_client:
 	if (fast(tx > 0)) {
 		tcp_connection_reset_txbuf(client);
 		client->stage = SOCKS5_STAGE_STREAM;
-		target->stage = SOCKS5_STAGE_STREAM;
+		server->stage = SOCKS5_STAGE_STREAM;
 		return 0;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			poller_disable_read(el->poller, target->fd, target);
+			poller_disable_read(el->poller, server->fd, server);
 			poller_enable_write(el->poller, client->fd, client);
 			return 0;
 		} else {
@@ -255,9 +258,9 @@ reply_to_client:
 	}
 }
 
-static int client_stream_to_target(struct el *el, struct tcp_connection *client)
+static int client_stream_to_server(struct el *el, struct tcp_connection *client)
 {
-	struct tcp_connection *target = client->peer_tcp_conn;;
+	struct tcp_connection *server = client->peer_tcp_conn;;
 	char *data = NULL;
 	size_t data_len = 0;
 	int ciphertext_len = 0;
@@ -284,7 +287,7 @@ try_again:
 		return -1;
 	}
 
-	tcp_connection_append_txbuf(target, plaintext, (size_t)plaintext_len);
+	tcp_connection_append_txbuf(server, plaintext, (size_t)plaintext_len);
 	free(plaintext);
 
 	if (data_len == 4 + (size_t)ciphertext_len) {
@@ -293,22 +296,22 @@ try_again:
 		tcp_connection_move_rxbuf(client, 4 + (size_t)ciphertext_len);
 	}
 
-	tx = send(target->fd, target->txbuf, target->txbuf_length, 0);
+	tx = send(server->fd, server->txbuf, server->txbuf_length, 0);
 
 	if (fast(tx > 0)) {
-		if ((size_t)tx == target->txbuf_length) {
-			tcp_connection_reset_txbuf(target);
+		if ((size_t)tx == server->txbuf_length) {
+			tcp_connection_reset_txbuf(server);
 			goto try_again;
 		} else {
 			poller_disable_read(el->poller, client->fd, client);
-			poller_enable_write(el->poller, target->fd, target);
-			tcp_connection_move_txbuf(target, (size_t)tx);
+			poller_enable_write(el->poller, server->fd, server);
+			tcp_connection_move_txbuf(server, (size_t)tx);
 		}
 		return 0;
 	} else {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			poller_disable_read(el->poller, client->fd, client);
-			poller_enable_write(el->poller, target->fd, target);
+			poller_enable_write(el->poller, server->fd, server);
 			return 0;
 		} else {
 			return -1;
@@ -316,12 +319,12 @@ try_again:
 	}
 }
 
-static int recvfrom_client_cb(struct el *el, struct tcp_connection *client)
+static int recvfrom_local_cb(struct el *el, struct tcp_connection *client)
 {
 	int ret = -1;
 	while (1) {
-		char buf[4096];
-		ssize_t rx = recv(client->fd, buf, sizeof(buf), 0);
+		char buf[BUFF_SIZE];
+		ssize_t rx = recv(client->fd, buf, BUFF_SIZE - 1, 0);
 		if (fast(rx > 0)) {
 			tcp_connection_append_rxbuf(client, buf, (size_t)rx);
 		} else if (rx < 0) {
@@ -345,7 +348,7 @@ static int recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 		break;
 
 	case SOCKS5_STAGE_STREAM:
-		ret = client_stream_to_target(el, client);
+		ret = client_stream_to_server(el, client);
 		break;
 
 	default:
@@ -356,15 +359,15 @@ static int recvfrom_client_cb(struct el *el, struct tcp_connection *client)
 	return ret;
 }
 
-static int sendto_client_cb(struct el *el, struct tcp_connection *client)
+static int sendto_local_cb(struct el *el, struct tcp_connection *client)
 {
-	struct tcp_connection *target = client->peer_tcp_conn;
+	struct tcp_connection *server = client->peer_tcp_conn;
 	ssize_t tx = send(client->fd, client->txbuf, client->txbuf_length, 0);
 
 	if (fast(tx > 0)) {
 		if ((size_t)tx == client->txbuf_length) {
 			tcp_connection_reset_txbuf(client);
-			poller_enable_read(el->poller, target->fd, target);
+			poller_enable_read(el->poller, server->fd, server);
 			poller_disable_write(el->poller, client->fd, client);
 		} else {
 			tcp_connection_move_txbuf(client, (size_t)tx);
@@ -379,15 +382,15 @@ static int sendto_client_cb(struct el *el, struct tcp_connection *client)
 	}
 }
 
-static int recvfrom_target_cb(struct el *el, struct tcp_connection *target)
+static int recvfrom_server_cb(struct el *el, struct tcp_connection *server)
 {
-	struct tcp_connection *client = target->peer_tcp_conn;
+	struct tcp_connection *client = server->peer_tcp_conn;
 
 	while (1) {
-		char buf[4096];
-		ssize_t rx = recv(target->fd, buf, sizeof(buf), 0);
+		char buf[BUFF_SIZE];
+		ssize_t rx = recv(server->fd, buf, BUFF_SIZE - 1, 0);
 		if (fast(rx > 0)) {
-			tcp_connection_append_rxbuf(target, buf, (size_t)rx);
+			tcp_connection_append_rxbuf(server, buf, (size_t)rx);
 		} else if (rx < 0) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				break;
@@ -399,13 +402,13 @@ static int recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 		}
 	}
 
-	if (slow(target->rxbuf_length == 0))
+	if (slow(server->rxbuf_length == 0))
 		return -1;
 
 	char *ciphertext;
 	int ciphertext_len;
 	ciphertext_len = cryptor.encrypt(&cryptor, &ciphertext,
-					 target->rxbuf, (unsigned int)target->rxbuf_length);
+					 server->rxbuf, (unsigned int)server->rxbuf_length);
 
 	if (ciphertext_len < 0) {
 		ERROR("Encryption failure.");
@@ -414,7 +417,7 @@ static int recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 
 	tcp_connection_append_txbuf(client, (char *)&ciphertext_len, 4);
 	tcp_connection_append_txbuf(client, ciphertext, (size_t)ciphertext_len);
-	tcp_connection_reset_rxbuf(target);
+	tcp_connection_reset_rxbuf(server);
 	free(ciphertext);
 
 	ssize_t tx = send(client->fd, client->txbuf, client->txbuf_length, 0);
@@ -423,7 +426,7 @@ static int recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 		if ((size_t)tx == client->txbuf_length) {
 			tcp_connection_reset_txbuf(client);
 		} else {
-			poller_disable_read(el->poller, target->fd, target);
+			poller_disable_read(el->poller, server->fd, server);
 			poller_enable_write(el->poller, client->fd, client);
 			tcp_connection_move_txbuf(client, (size_t)tx);
 		}
@@ -433,17 +436,17 @@ static int recvfrom_target_cb(struct el *el, struct tcp_connection *target)
 	}
 }
 
-static int sendto_target_cb(struct el *el, struct tcp_connection *target)
+static int sendto_server_cb(struct el *el, struct tcp_connection *server)
 {
-	struct tcp_connection *client = target->peer_tcp_conn;
-	ssize_t tx = send(target->fd, target->txbuf, target->txbuf_length, 0);
+	struct tcp_connection *client = server->peer_tcp_conn;
+	ssize_t tx = send(server->fd, server->txbuf, server->txbuf_length, 0);
 
 	if (fast(tx > 0)) {
-		if ((size_t)tx == target->txbuf_length) {
+		if ((size_t)tx == server->txbuf_length) {
 			poller_enable_read(el->poller, client->fd, client);
-			tcp_connection_reset_txbuf(target);
+			tcp_connection_reset_txbuf(server);
 		} else {
-			tcp_connection_move_txbuf(target, (size_t)tx);
+			tcp_connection_move_txbuf(server, (size_t)tx);
 		}
 		return 0;
 	} else {
